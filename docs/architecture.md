@@ -9,4 +9,4 @@ DeliveryIQ is one deployment and one application:
 
 This milestone intentionally avoids separate frontend/backend apps, Vercel Services, queues, workflows, and microservices. Future business logic should remain in the existing `src/` modules unless a cohesive new domain module is necessary.
 
-The foundation applies Helmet, CORS restricted to `APP_ORIGIN`, JSON body limits, API rate limiting, and disabled Express fingerprints. Authentication and tenant authorization are required before client data endpoints are added.
+The application applies a same-origin Helmet CSP, CORS restricted to `APP_ORIGIN`, JSON body limits, API rate limiting, and disabled Express fingerprints. The static browser assets do not require inline scripts or external resources, so this CSP can remain enabled. Authentication and tenant authorization are required before client data endpoints are added.
