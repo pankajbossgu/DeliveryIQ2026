@@ -20,3 +20,24 @@ Malformed pagination, dates, filter values, or sort values return `422` with `IN
 ## Product intelligence
 
 `src/upload.js` performs bounded parsing and validation only. The MongoDB-backed `ReportProcess` store in `src/reports.js` persists each validated process and its complete classification review snapshot across browser refreshes and serverless restarts; only its explicit start endpoint loads mappings and invokes classification. `src/product-classifier.js` is the only Gemini boundary. It uses the hardcoded Gemini 2.5 Flash-Lite model and server-only `GEMINI_API_KEY`, sending only a deduplicated list of unknown product names plus the authenticated client's active categories. `src/product.js` first applies client product mappings by normalized product name; it never calls the provider for those mappings. Suggestions are validated against the request batch and category allow-list when one exists (or a concise proposed category for a new client), stored separately for audit, and remain review-only until a client saves an `AI Approved`, `Client Modified`, or `Manual` mapping. Failed, timed-out, or partial AI requests leave products in Needs Review without losing the upload.
+
+## Universal current-order CSV export
+
+`GET /api/universal/export` exports the same validated current-order filters used by
+Universal Report (`search`, status, status category, order date, and report
+completion date). It never mixes immutable historical occurrences into the
+current-order export. Each stored product line receives its own CSV row, so a
+multi-product order is preserved without collapsing quantities or values.
+
+Exports are tenant-scoped from the server-owned client context, generate CSV rows
+incrementally from a MongoDB cursor, and reject requests over 50,000 current
+orders with a clear filter-narrowing error. Every text cell is protected from CSV
+formula injection; numeric values remain numeric text. The current application
+uses `DEFAULT_CLIENT_ID` as its documented temporary development identity, so
+production authentication/authorization must replace that configuration before
+multi-user deployment.
+
+The export route has a tighter 20-request-per-15-minute limiter in addition to
+the application-wide API limiter. Universal query parsing rejects unsupported
+parameters (including MongoDB operator-shaped keys); the legacy browser
+`clientId` parameter remains ignored so it cannot affect server-side scope.

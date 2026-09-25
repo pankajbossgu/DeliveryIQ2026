@@ -112,6 +112,32 @@ test('universal read APIs paginate, validate, sort, and remain scoped to the ser
   } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
 });
 
+test('universal CSV export streams only filtered current tenant orders and preserves product lines safely', async () => {
+  const app = require('../src/app'); const previousStore = app.locals.universalStore; const store = new UniversalStore({ mongoUri: null }); const client = app.locals.clientId; app.locals.universalStore = store;
+  await store.syncCompletedReport(client, universalReport(client, 'EXP-1', '2026-02-01T00:00:00Z'), [
+    { ...universalRow('SAFE-1', '2026-01-01', '=Formula', 2), category: 'RTO', originalStatus: '+Returned' },
+    { ...universalRow('SAFE-1', '2026-01-01', '@Other', 1), category: 'RTO', originalStatus: '+Returned' },
+    universalRow('DEL-1', '2026-01-02', 'Normal', 1)
+  ]);
+  await store.syncCompletedReport('other-client', universalReport('other-client', 'EXP-2', '2026-02-01T00:00:00Z'), [universalRow('PRIVATE-1', '2026-01-01', 'Secret', 1)]);
+  const server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)); }); const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    let response = await fetch(`${base}/api/universal/export?statusCategory=RTO&fromDate=2026-01-01&toDate=2026-01-01&clientId=other-client`); const output = await response.text();
+    assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /text\/csv/); assert.match(output, /Actual Status.*Status Category/); assert.match(output, /"'\+Returned","RTO"/); assert.match(output, /"'=Formula"/); assert.match(output, /"'@Other"/); assert.equal((output.match(/SAFE-1/g) || []).length, 2); assert.doesNotMatch(output, /DEL-1|PRIVATE-1/);
+    response = await fetch(`${base}/api/universal/export?statusCategory[$ne]=RTO`); assert.equal(response.status, 422);
+    response = await fetch(`${base}/api/universal/export?$where=sleep(1)`); assert.equal(response.status, 422);
+    response = await fetch(`${base}/api/universal/export?search[$regex]=SAFE`); assert.equal(response.status, 422);
+    response = await fetch(`${base}/api/universal/export?statusCategory=Cancelled`); assert.equal(response.status, 200); assert.match(await response.text(), /Order ID/);
+  } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
+});
+
+test('universal export limit is checked before the current-order iterator is created', async () => {
+  const store = new UniversalStore({ mongoUri: null });
+  await store.syncCompletedReport('a', universalReport('a', 'L1', '2026-02-01T00:00:00Z'), [universalRow('ONE'), universalRow('TWO')]);
+  const result = await store.exportCurrentOrders('a', {}, { maxOrders: 1 });
+  assert.equal(result.overLimit, true); assert.equal(result.total, 2); assert.equal(result.orders, undefined);
+});
+
 test('Universal Report frontend consumes the read-only current-state and history APIs', () => {
   const fs = require('node:fs');
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
