@@ -31,3 +31,38 @@ test('CSV preserves actual courier status separately from normalized status cate
   const output = csv([{ orderId: 'ORD001', orderDate: '2026-01-01', originalStatus: 'Out for Delivery', category: 'In Transit', originalProductName: 'Nail Serum', masterCategory: 'Beauty', productCategory: 'Nail Serum', paymentMode: 'COD' }], 'simple');
   assert.match(output, /Actual Status/); assert.match(output, /Status Category/); assert.match(output, /"Out for Delivery","In Transit"/);
 });
+
+const { UniversalStore, UniversalOrder, UniversalOrderOccurrence, UniversalSync, ReportStore } = require('../src/reports');
+function universalReport(clientId, reportId, completedAt, orderDate = '2026-01-01') { return { clientId, reportId, reportStatus: 'completed', completedAt: new Date(completedAt), sourceFileName: 'orders.csv', templateType: 'full', orderDate }; }
+function universalRow(orderId, orderDate = '2026-01-01', product = 'Widget', quantity = 1) { return { orderId, normalizedOrderId: orderId, orderDate, category: 'Delivered', originalStatus: 'Delivered', normalizedStatus: 'delivered', originalProductName: product, normalizedProductName: product.toLowerCase(), productCategory: 'Widgets', masterCategory: 'Goods', quantity, productPrice: 10, rowValue: quantity * 10, paymentMode: 'COD', courier: 'Courier', orderSource: 'Store' }; }
+test('universal schemas enforce client-scoped uniqueness boundaries and expected indexes', () => {
+  assert.ok(UniversalOrder.schema.indexes().some(([key, options]) => key.clientId === 1 && key.canonicalOrderId === 1 && options.unique));
+  assert.ok(UniversalOrderOccurrence.schema.indexes().some(([key, options]) => key.clientId === 1 && key.reportId === 1 && key.canonicalOrderId === 1 && options.unique));
+  assert.ok(UniversalSync.schema.indexes().some(([key, options]) => key.clientId === 1 && key.reportId === 1 && options.unique));
+});
+test('universal sync groups product rows, keeps occurrences immutable, and is idempotent', async () => {
+  const store = new UniversalStore({ mongoUri: null }); const report = universalReport('a', 'R1', '2026-02-01T00:00:00Z');
+  const first = await store.syncCompletedReport('a', report, [universalRow(' Order 1 ', '2020-01-01', 'One'), universalRow('Order 1', '2020-01-01', 'Two', 2)]);
+  const retry = await store.syncCompletedReport('a', report, [universalRow('Order 1', '2020-01-01', 'One')]);
+  assert.equal(first.counts.occurrencesCreated, 1); assert.equal(store.orders.size, 1); assert.equal([...store.orders.values()][0].products.length, 2); assert.equal(store.occurrences.size, 1); assert.equal(retry.alreadyCompleted, true); assert.equal(retry.counts.occurrencesCreated, 1);
+  await store.syncCompletedReport('a', universalReport('a', 'R2', '2026-02-02T00:00:00Z'), [universalRow('Order 1')]);
+  assert.equal(store.occurrences.size, 2);
+});
+test('universal latest projection uses only completion time then reportId and isolates clients', async () => {
+  const store = new UniversalStore({ mongoUri: null });
+  await store.syncCompletedReport('a', universalReport('a', 'R9', '2026-03-02T00:00:00Z'), [universalRow('same', '2000-01-01', 'New')]);
+  await store.syncCompletedReport('a', universalReport('a', 'R1', '2026-03-01T00:00:00Z'), [universalRow('same', '2099-01-01', 'Old')]);
+  assert.equal(store.orders.get(store.key('a', 'same')).products[0].originalProductName, 'New');
+  await store.syncCompletedReport('a', universalReport('a', 'RZ', '2026-03-02T00:00:00Z'), [universalRow('same', '1999-01-01', 'Tie winner')]);
+  assert.equal(store.orders.get(store.key('a', 'same')).latestReportId, 'RZ');
+  await store.syncCompletedReport('b', universalReport('b', 'R1', '2026-01-01T00:00:00Z'), [universalRow('same', '2099-01-01', 'Other client')]);
+  assert.equal(store.orders.size, 2); assert.equal(store.orders.get(store.key('b', 'same')).products[0].originalProductName, 'Other client');
+});
+test('incomplete reports do not synchronize and a universal sync failure does not undo a completed report', async () => {
+  const universal = new UniversalStore({ mongoUri: null });
+  assert.equal((await universal.syncCompletedReport('a', { ...universalReport('a', 'bad', '2026-01-01'), reportStatus: 'processing' }, [universalRow('1')])).status, 'skipped');
+  const reports = new ReportStore({ mongoUri: null, universalStore: universal });
+  universal.syncCompletedReport = async () => { throw new Error('storage unavailable'); };
+  const warn = console.warn; console.warn = () => {}; let report; try { report = await reports.create('a', { templateType: 'full', sourceFileName: 'orders.csv', rows: [universalRow('1')] }); } finally { console.warn = warn; }
+  assert.equal(report.reportStatus, 'completed'); assert.equal((await reports.list('a')).length, 1); assert.equal(universal.syncs.get(universal.key('a', report.reportId)).status, 'failed');
+});
