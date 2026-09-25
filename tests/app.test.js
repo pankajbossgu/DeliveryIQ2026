@@ -24,3 +24,28 @@ test('mapping/category APIs provide management operations and valid categories o
 test('analytics count distinct normalized orders, support category analytics and filtered denominators', () => { const rows = [['1', 'Delivered', 'A', 'Clothing', 'COD'], ['1', 'Delivered', 'B', 'Beauty', 'COD'], ['2', 'Delivered', 'A', 'Clothing', 'UPI'], ['3', 'NDR', 'A', 'Unclassified Products', 'COD'], ['4', 'RTO', 'A', 'Clothing', 'COD']].map(([orderId, category, originalProductName, productCategory, paymentMode]) => ({ orderId, normalizedOrderId: orderId, category, originalProductName, productCategory, orderDate: '2026-09-01', paymentMode, quantity: 1, rowValue: 10, courier: 'C', orderSource: 'Store' })); const all = aggregate(rows, 'full'); assert.equal(all.totalOrders, 4); assert.equal(all.analytics.productCategory.find((item) => item.name === 'Clothing').orders, 3); const filtered = aggregate(applyFilters(rows, { paymentMode: 'UPI' }, 'full'), 'full'); assert.equal(filtered.analytics.statusDistribution.percentages.Delivered, 100); assert.equal(aggregate(rows, 'simple').analytics.courier, undefined); assert.match(reportCsv([{ orderId: '=CMD', orderDate: '2026-09-01', category: 'Delivered', originalProductName: 'A', productCategory: 'C', paymentMode: 'COD' }], 'simple'), /'=CMD/); });
 
 test('completed report rows retain their category snapshot after mapping changes', async () => { const store = new ReportStore({ mongoUri: null }); const report = await store.create('client-a', { templateType: 'simple', sourceFileName: 'orders.csv', rows: [{ originalOrderId: 'ORD-1', normalizedOrderId: 'ORD-1', order_id: 'ORD-1', order_date: '2026-01-01', category: 'Delivered', originalStatus: 'Delivered', normalizedStatus: 'delivered', originalProductName: 'T-Shirt', normalizedProductName: 't shirt', productCategory: 'Clothing', payment_mode: 'COD' }] }); const detail = await store.detail('client-a', report.reportId); assert.equal(detail.filtered.analytics.productCategory[0].name, 'Clothing'); });
+
+test('Gemini product workflow deduplicates unknown products and never sends saved mappings', async () => {
+  const calls = []; const provider = { async classifyProducts(products, categories) { calls.push({ products, categories }); return { model: 'gemini-2.5-flash-lite', results: [{ product: 'Rose Face Serum', category: 'Beauty', confidence: 0.94, reason: 'Serum' }], failedProducts: [] }; } };
+  const result = await classifyProducts(['Known Shirt', 'Rose Face Serum', 'Rose Face Serum'], { mappings: [{ normalizedValue: 'known shirt', category: 'Clothing' }], categories: ['Clothing', 'Beauty'], provider });
+  assert.deepEqual(calls[0].products, ['Rose Face Serum']);
+  assert.equal(result.items.find((item) => item.value === 'Known Shirt').mappingSource, 'client');
+  assert.equal(result.items.find((item) => item.value === 'Rose Face Serum').suggestedCategory, 'Beauty');
+  const next = await classifyProducts(['Rose Face Serum'], { mappings: [{ normalizedValue: 'rose face serum', category: 'Beauty' }], categories: ['Beauty'], provider });
+  assert.equal(calls.length, 1); assert.equal(next.items[0].category, 'Beauty');
+});
+test('invalid Gemini categories remain needs review and transient Gemini retries are bounded', async () => {
+  const { GeminiProductClassifier, validateGeminiResults } = require('../src/product-classifier');
+  assert.deepEqual(validateGeminiResults({ results: [{ product: 'Product A', category: 'Random Category' }] }, ['Product A'], ['Beauty']), []);
+  let requests = 0; const classifier = new GeminiProductClassifier({ apiKey: 'test-key', retries: 2, fetchImpl: async () => { requests += 1; return { ok: false, status: 429 }; } });
+  const response = await classifier.classifyProducts(['Product A'], ['Beauty']);
+  assert.equal(requests, 3); assert.deepEqual(response.failedProducts, ['Product A']);
+});
+test('manual, modified, and rejected review outcomes do not persist rejected AI categories', async () => {
+  const store = new MappingStore({ mongoUri: null }); await store.saveCategory('client-a', 'Beauty'); await store.saveCategory('client-a', 'Personal Care');
+  await store.save('product', 'client-a', 'Rose Face Serum', 'Personal Care', { source: 'Client Modified' });
+  assert.equal((await store.list('product', 'client-a'))[0].category, 'Personal Care');
+  assert.equal((await store.list('product', 'client-b')).length, 0);
+  // A rejected suggestion has no call to save(), therefore it cannot become a final mapping.
+  assert.equal((await store.list('product', 'client-a')).some((item) => item.originalExample === 'Rejected Product'), false);
+});
