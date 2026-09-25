@@ -1,0 +1,25 @@
+{
+  "name": "deliveryiq2026",
+  "version": "0.1.0",
+  "private": true,
+  "description": "E-commerce delivery intelligence and analytics platform.",
+  "type": "commonjs",
+  "main": "api/index.js",
+  "scripts": {
+    "start": "node api/index.js",
+    "dev": "node --watch api/index.js",
+    "test": "node --test tests",
+    "check": "node --check api/index.js && node --check src/app.js && node --check src/utils.js && node --check public/js/app.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.1.0",
+    "mongoose": "^8.15.1"
+  }
+}
