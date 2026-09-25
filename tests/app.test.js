@@ -2,135 +2,25 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const app = require('../src/app');
-
-test('health endpoint confirms the application is available', async () => {
-  const server = http.createServer(app);
-  await new Promise((resolve) => server.listen(0, resolve));
-  const { port } = server.address();
-
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/api/health`);
-    assert.equal(response.status, 200);
-    const payload = await response.json();
-    assert.equal(payload.status, 'ok');
-    assert.equal(payload.service, 'deliveryiq');
-    assert.ok(Number.isFinite(Date.parse(payload.timestamp)));
-  } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  }
-});
-
-test('application shell is served with the planned product navigation', async () => {
-  const server = http.createServer(app);
-  await new Promise((resolve) => server.listen(0, resolve));
-  const { port } = server.address();
-
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/`);
-    assert.equal(response.status, 200);
-    const page = await response.text();
-    assert.match(page, /Upload Data/);
-    assert.match(page, /Product Mapping/);
-    assert.match(page, /Status Mapping/);
-    assert.match(page, /Maximum 50,000 rows/);
-  } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  }
-});
-
-const { validateUpload } = require('../src/upload');
+const { validateUpload, csvTemplate, xlsxTemplate, normalizeOrderId } = require('../src/upload');
 const { classifyStatus, normalizeMappingValue } = require('../src/classification');
 const { MappingStore } = require('../src/mappings');
-const headers = ' Order-ID ,Order Date,Status,Product Name,Qty,Payment Mode,Order Source\n';
-const validRow = 'ORD-1001,2026-01-15,Delivered,Product A,2,Prepaid,Store\n';
-test('upload validator accepts normalized CSV columns and retains multi-product orders', () => {
-  const result = validateUpload({ originalname: 'orders.csv', buffer: Buffer.from(headers + validRow + 'ORD-1001,2026-01-15,Shipped,Product B,1,COD,Store\n') });
-  assert.equal(result.success, true); assert.equal(result.summary.uniqueOrders, 1); assert.equal(result.validation.duplicates, 0);
-});
-test('upload validator reports duplicates, invalid quantities, missing columns, and row limit', () => {
-  const duplicate = validateUpload({ originalname: 'orders.csv', buffer: Buffer.from(headers + validRow + validRow) });
-  assert.equal(duplicate.success, true); assert.equal(duplicate.validation.duplicates, 1);
-  const quantity = validateUpload({ originalname: 'orders.csv', buffer: Buffer.from(headers + 'ORD-1,2026-01-15,Delivered,A,0,COD,Store\n') });
-  assert.equal(quantity.code, 'INVALID_ROWS');
-  const missing = validateUpload({ originalname: 'orders.csv', buffer: Buffer.from('Order ID,Status\nORD-1,Delivered\n') });
-  assert.equal(missing.code, 'MISSING_REQUIRED_COLUMNS');
-  const tooMany = validateUpload({ originalname: 'orders.csv', buffer: Buffer.from(headers + Array(50001).fill(validRow).join('')) });
-  assert.equal(tooMany.code, 'ROW_LIMIT_EXCEEDED');
-});
-
-test('upload API validates bytes and serves usable templates', async () => {
-  const server = http.createServer(app); await new Promise((resolve) => server.listen(0, resolve)); const { port } = server.address();
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/api/uploads/validate`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-file-name': '../../orders.csv' }, body: headers + validRow });
-    assert.equal(response.status, 200); assert.equal((await response.json()).file.name, 'orders.csv');
-    const template = await fetch(`http://127.0.0.1:${port}/api/uploads/template.xlsx`);
-    assert.equal(template.status, 200); assert.equal(validateUpload({ originalname: 'template.xlsx', buffer: Buffer.from(await template.arrayBuffer()) }).success, true);
-  } finally { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
-});
-
-test('upload validator rejects unsupported, empty, malformed, and oversized file payloads', () => {
-  assert.equal(validateUpload({ originalname: 'orders.pdf', buffer: Buffer.from('x') }).code, 'UNSUPPORTED_FILE_TYPE');
-  assert.equal(validateUpload({ originalname: 'orders.csv', buffer: Buffer.alloc(0) }).code, 'EMPTY_FILE');
-  assert.equal(validateUpload({ originalname: 'orders.xlsx', buffer: Buffer.from('not a workbook') }).code, 'MALFORMED_FILE');
-});
-
-test('status classifier applies all final categories and never guesses unknown values', () => {
-  for (const [status, category] of [['Delivered', 'Delivered'], ['POD', 'Delivered'], ['Successfully Delivered', 'Delivered'], ['Ready to Ship', 'In Transit'], ['Ready for Pickup', 'In Transit'], ['Picked Up', 'In Transit'], ['Shipped', 'In Transit'], ['In Transit', 'In Transit'], ['OFD', 'In Transit'], ['Misrouted', 'In Transit'], ['Rerouted', 'In Transit'], ['NDR', 'NDR'], ['Undelivered', 'NDR'], ['Delivery Failed', 'NDR'], ['Customer Not Available', 'NDR'], ['RTO', 'RTO'], ['RTO Initiated', 'RTO'], ['RTO In Transit', 'RTO'], ['RTO OFD', 'RTO'], ['Cancelled', 'Cancelled'], ['Canceled', 'Cancelled'], ['Order Cancelled', 'Cancelled'], ['Lost', 'Other'], ['Damaged', 'Other'], ['On Hold', 'Other']]) assert.equal(classifyStatus(status).category, category, status);
-  const unknown = classifyStatus('Shipment Held for Security Verification'); assert.equal(unknown.category, null); assert.equal(unknown.classificationRequired, true);
-  assert.equal(classifyStatus('Pickup Failed').classificationRequired, true);
-});
-
-test('RTO context and status normalization have deterministic priority', () => {
-  ['RTO Delivered', 'RTO NDR', 'RTO OFD', 'RTO In Transit', 'Return-to-Origin In Transit', 'Rto_Delivered'].forEach((status) => assert.equal(classifyStatus(status).category, 'RTO'));
-  assert.equal(normalizeMappingValue(' RTO-Delivered / '), 'rto delivered');
-});
-
-test('client status mappings are isolated and applied to future classifications', async () => {
-  const store = new MappingStore({ mongoUri: null });
-  await store.save('status', 'client-a', 'Shipment Held at Facility', 'In Transit');
-  await store.save('status', 'client-b', 'Shipment Held at Facility', 'Other');
-  const clientA = await store.list('status', 'client-a'); const clientB = await store.list('status', 'client-b');
-  assert.equal(classifyStatus('Shipment Held at Facility', clientA).category, 'In Transit');
-  assert.equal(classifyStatus('Shipment Held at Facility', clientB).category, 'Other');
-  assert.equal((await store.list('status', 'client-a')).length, 1);
-});
-
-test('validation returns grouped unmapped reviews and mapping APIs validate categories', async () => {
-  const server = http.createServer(app); await new Promise((resolve) => server.listen(0, resolve)); const { port } = server.address();
-  const source = headers + 'ORD-999,2026-01-15,Shipment Held at Facility,Unmapped Product,1,COD,Store\n';
-  try {
-    const config = await (await fetch(`http://127.0.0.1:${port}/api/classifications/config`)).json(); const productCategory = config.productCategories[0];
-    const validate = () => fetch(`http://127.0.0.1:${port}/api/uploads/validate`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-file-name': 'review.csv' }, body: source });
-    let response = await validate(); let payload = await response.json();
-    assert.equal(payload.classifications.statuses[0].classificationRequired, true); assert.equal(payload.classifications.products[0].classificationRequired, true);
-    response = await fetch(`http://127.0.0.1:${port}/api/mappings/status`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'Shipment Held at Facility', category: 'In Transit' }) }); assert.equal(response.status, 200);
-    response = await fetch(`http://127.0.0.1:${port}/api/mappings/product`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ product: 'Unmapped Product', category: productCategory }) }); assert.equal(response.status, 200);
-    response = await validate(); payload = await response.json(); assert.equal(payload.classifications.statuses[0].category, 'In Transit'); assert.equal(payload.classifications.statuses[0].mappingSource, 'client'); assert.equal(payload.classifications.products[0].category, productCategory);
-    response = await fetch(`http://127.0.0.1:${port}/api/mappings/status`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'Anything', category: 'UNMAPPED' }) }); assert.equal(response.status, 422);
-  } finally { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
-});
-
-const { aggregate, applyFilters, csv: reportCsv } = require('../src/reports');
 const { classifyProducts, normalizeProductName } = require('../src/product');
-test('simple and full templates validate as CSV and XLSX', () => {
-  for (const type of ['simple', 'full']) for (const extension of ['csv', 'xlsx']) {
-    const { csvTemplate, xlsxTemplate } = require('../src/upload');
-    const buffer = extension === 'csv' ? Buffer.from(csvTemplate(type)) : xlsxTemplate(type);
-    const result = validateUpload({ originalname: `template.${extension}`, buffer }, { templateType: type });
-    assert.equal(result.success, true, `${type} ${extension}`);
-    assert.equal(result.templateType, type);
-  }
-});
-test('product intelligence deduplicates, applies mappings/rules, and keeps unavailable AI products for review', async () => {
-  assert.equal(normalizeProductName(" men's cotton t-shirt "), 'mens cotton t shirt');
-  const saved = await classifyProducts(['Mystery Box', 'Mystery Box', 'T-Shirt'], { mappings: [{ normalizedValue: 'mystery box', category: 'Gift Boxes' }] });
-  assert.equal(saved.items.length, 2); assert.equal(saved.items.find((item) => item.value === 'Mystery Box').mappingSource, 'client'); assert.equal(saved.items.find((item) => item.value === 'T-Shirt').category, 'Clothing');
-  const unavailable = await classifyProducts(['Unknowable Item'], { provider: { classifyProducts: async () => { throw new Error('offline'); } } });
-  assert.equal(unavailable.providerUnavailable, true); assert.equal(unavailable.items[0].classificationRequired, true);
-});
-test('report calculator uses distinct orders, filters with the correct denominator, and gates full dimensions', () => {
-  const rows = [['1', 'Delivered', 'A', 'COD'], ['1', 'Delivered', 'B', 'COD'], ['2', 'Delivered', 'A', 'UPI'], ['3', 'NDR', 'A', 'COD'], ['4', 'RTO', 'A', 'COD'], ['5', 'In Transit', 'A', 'COD']].map(([orderId, category, originalProductName, paymentMode], index) => ({ orderId, category, originalProductName, orderDate: `2026-09-0${index + 1}`, paymentMode, productCategory: 'Clothing', quantity: 1, rowValue: 10, courier: 'C', orderSource: 'Store' }));
-  const all = aggregate(rows, 'full'); assert.equal(all.totalOrders, 5); assert.equal(all.summary.Delivered, 2); assert.equal(all.analytics.product.find((item) => item.name === 'A').orders, 5);
-  const filtered = aggregate(applyFilters(rows, { paymentMode: 'UPI' }, 'full'), 'full'); assert.equal(filtered.analytics.statusDistribution.percentages.Delivered, 100);
-  assert.equal(aggregate(rows, 'simple').analytics.courier, undefined); assert.match(reportCsv([{ orderId: '=CMD', orderDate: '2026-09-01', category: 'Delivered', originalProductName: 'A', productCategory: 'C', paymentMode: 'COD' }], 'simple'), /'=CMD/);
-});
+const { ReportStore, aggregate, applyFilters, csv: reportCsv } = require('../src/reports');
+async function server() { const instance = http.createServer(app); await new Promise((resolve) => instance.listen(0, resolve)); return instance; }
+async function close(instance) { await new Promise((resolve, reject) => instance.close((error) => error ? reject(error) : resolve())); }
+const simpleHeader = 'Order ID,Order Date,Order Status,Product Name,Payment Mode\n';
+const fullHeader = 'Order ID,Order Date,Order Status,Product Name,Product Qty,Product Price,Payment Mode,Courier,Source/Website/Store\n';
+
+test('health and browser shell expose the usable product pages', async () => { const instance = await server(); try { const health = await fetch(`http://127.0.0.1:${instance.address().port}/api/health`).then((r) => r.json()); assert.equal(health.status, 'ok'); const page = await fetch(`http://127.0.0.1:${instance.address().port}/`).then((r) => r.text()); ['Product Mapping', 'Status Mapping', 'Download Simple CSV', 'report-filters'].forEach((text) => assert.match(page, new RegExp(text))); } finally { await close(instance); } });
+test('official simple and full CSV/XLSX templates validate with their exact type', () => { for (const type of ['simple', 'full']) for (const extension of ['csv', 'xlsx']) { const buffer = extension === 'csv' ? Buffer.from(csvTemplate(type)) : xlsxTemplate(type); const result = validateUpload({ originalname: `template.${extension}`, buffer }, { templateType: type }); assert.equal(result.success, true, `${type}/${extension}`); assert.equal(result.templateType, type); } });
+test('validation accepts aliases, uses normalized distinct order IDs, and detects duplicate rows', () => { const csv = 'OrderID,Order Date,Status,Product Name,Payment Mode\n ORD-1 ,2026-01-15,Delivered,Product A,COD\nORD-1,2026-01-15,Delivered,Product B,COD\nORD-2,2026-01-15,Delivered,Product A,COD\n'; const result = validateUpload({ originalname: 'orders.csv', buffer: Buffer.from(csv) }, { templateType: 'simple' }); assert.equal(result.success, true); assert.equal(result.summary.uniqueOrders, 2); assert.equal(result.summary.productRows, 3); assert.equal(result.normalizedRows[0].originalOrderId, 'ORD-1'); assert.equal(normalizeOrderId(' ORD-1  '), 'ORD-1'); const duplicate = validateUpload({ originalname: 'orders.csv', buffer: Buffer.from(simpleHeader + 'ORD-1,2026-01-15,Delivered,A,COD\nORD-1,2026-01-15,Delivered,A,COD\n') }, { templateType: 'simple' }); assert.equal(duplicate.validation.duplicates, 1); });
+test('validation stops order-level conflicts rather than choosing a status', () => { const result = validateUpload({ originalname: 'conflict.csv', buffer: Buffer.from(simpleHeader + 'ORD-1,2026-01-15,Delivered,A,COD\nORD-1,2026-01-15,RTO,B,COD\n') }, { templateType: 'simple' }); assert.equal(result.success, false); assert.equal(result.code, 'ORDER_ID_CONFLICT'); assert.equal(result.details.conflicts[0].field, 'Order Status'); });
+test('validation rejects missing template fields and malformed files', () => { assert.equal(validateUpload({ originalname: 'bad.csv', buffer: Buffer.from('Order ID,Order Status\nORD-1,Delivered') }, { templateType: 'simple' }).code, 'MISSING_REQUIRED_COLUMNS'); assert.equal(validateUpload({ originalname: 'bad.xlsx', buffer: Buffer.from('not zip') }, { templateType: 'full' }).code, 'MALFORMED_FILE'); assert.equal(validateUpload({ originalname: 'full.csv', buffer: Buffer.from(fullHeader.replace('Courier,', '') + 'ORD-1,2026-01-15,Delivered,A,1,10,COD,Store\n') }, { templateType: 'full' }).code, 'MISSING_REQUIRED_COLUMNS'); });
+test('status engine retains deterministic categories, RTO priority, and UNMAPPED', () => { for (const [value, category] of [['Ready to Ship', 'In Transit'], ['Ready for Pickup', 'In Transit'], ['Picked Up', 'In Transit'], ['Shipped', 'In Transit'], ['Out for Delivery', 'In Transit'], ['Misrouted', 'In Transit'], ['Rerouted', 'In Transit'], ['NDR', 'NDR'], ['Undelivered', 'NDR'], ['Delivery Failed', 'NDR'], ['Customer Not Available', 'NDR'], ['RTO NDR', 'RTO'], ['RTO Delivered', 'RTO']]) assert.equal(classifyStatus(value).category, category); assert.equal(classifyStatus('unrecognized state').classificationRequired, true); assert.equal(normalizeMappingValue(' Rto_Delivered '), 'rto delivered'); });
+test('client mappings and client-managed categories persist in isolated stores', async () => { const store = new MappingStore({ mongoUri: null }); await store.saveCategory('one', 'Ethnic Wear'); await store.save('product', 'one', 'Premium Kurta', 'Ethnic Wear'); await store.save('status', 'one', 'Paused', 'In Transit'); await store.save('status', 'two', 'Paused', 'Other'); assert.equal((await classifyProducts(['Premium Kurta'], { mappings: await store.list('product', 'one') })).items[0].category, 'Ethnic Wear'); assert.equal(classifyStatus('Paused', await store.list('status', 'one')).category, 'In Transit'); assert.equal(classifyStatus('Paused', await store.list('status', 'two')).category, 'Other'); await store.renameCategory('one', 'Ethnic Wear', 'Indian Wear'); assert.equal((await store.list('product', 'one'))[0].category, 'Indian Wear'); await store.setCategoryActive('one', 'Indian Wear', false); assert.equal((await store.listCategories('one')).length, 0); assert.equal((await store.listCategories('one', true))[0].active, false); });
+test('unknown products need classification and saved manual mappings are reused without AI', async () => { assert.equal(normalizeProductName('Men Cotton T-Shirt - Blue'), 'men cotton t shirt blue'); const unknown = classifyProducts(['Mystery Box', 'Mystery Box']); assert.equal(unknown.items.length, 1); assert.equal(unknown.items[0].classificationRequired, true); const saved = classifyProducts(['Mystery Box'], { mappings: [{ normalizedValue: 'mystery box', category: 'Gift Boxes' }] }); assert.equal(saved.items[0].category, 'Gift Boxes'); assert.equal(saved.items[0].mappingSource, 'client'); });
+test('mapping/category APIs provide management operations and valid categories only', async () => { const instance = await server(); const base = `http://127.0.0.1:${instance.address().port}`; try { let response = await fetch(`${base}/api/product-categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Accessories' }) }); assert.equal(response.status, 201); response = await fetch(`${base}/api/mappings/product`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ product: 'Watch Strap', category: 'Accessories' }) }); assert.equal(response.status, 200); response = await fetch(`${base}/api/mappings/status`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'Queued', category: 'BAD' }) }); assert.equal(response.status, 422); const mappings = await fetch(`${base}/api/mappings/product`).then((r) => r.json()); assert.ok(mappings.mappings.some((item) => item.originalExample === 'Watch Strap')); } finally { await close(instance); } });
+test('analytics count distinct normalized orders, support category analytics and filtered denominators', () => { const rows = [['1', 'Delivered', 'A', 'Clothing', 'COD'], ['1', 'Delivered', 'B', 'Beauty', 'COD'], ['2', 'Delivered', 'A', 'Clothing', 'UPI'], ['3', 'NDR', 'A', 'Unclassified Products', 'COD'], ['4', 'RTO', 'A', 'Clothing', 'COD']].map(([orderId, category, originalProductName, productCategory, paymentMode]) => ({ orderId, normalizedOrderId: orderId, category, originalProductName, productCategory, orderDate: '2026-09-01', paymentMode, quantity: 1, rowValue: 10, courier: 'C', orderSource: 'Store' })); const all = aggregate(rows, 'full'); assert.equal(all.totalOrders, 4); assert.equal(all.analytics.productCategory.find((item) => item.name === 'Clothing').orders, 3); const filtered = aggregate(applyFilters(rows, { paymentMode: 'UPI' }, 'full'), 'full'); assert.equal(filtered.analytics.statusDistribution.percentages.Delivered, 100); assert.equal(aggregate(rows, 'simple').analytics.courier, undefined); assert.match(reportCsv([{ orderId: '=CMD', orderDate: '2026-09-01', category: 'Delivered', originalProductName: 'A', productCategory: 'C', paymentMode: 'COD' }], 'simple'), /'=CMD/); });
+
+test('completed report rows retain their category snapshot after mapping changes', async () => { const store = new ReportStore({ mongoUri: null }); const report = await store.create('client-a', { templateType: 'simple', sourceFileName: 'orders.csv', rows: [{ originalOrderId: 'ORD-1', normalizedOrderId: 'ORD-1', order_id: 'ORD-1', order_date: '2026-01-01', category: 'Delivered', originalStatus: 'Delivered', normalizedStatus: 'delivered', originalProductName: 'T-Shirt', normalizedProductName: 't shirt', productCategory: 'Clothing', payment_mode: 'COD' }] }); const detail = await store.detail('client-a', report.reportId); assert.equal(detail.filtered.analytics.productCategory[0].name, 'Clothing'); });

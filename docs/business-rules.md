@@ -2,6 +2,8 @@
 
 Final status categories are Delivered, In Transit, NDR, RTO, Cancelled, and Other. Resolution is saved client mapping, deterministic rules (with RTO precedence), then `UNMAPPED`; `UNMAPPED` is never reported as Other.
 
-Product classification is saved client mapping, deterministic product rule, optional server-side AI provider, then review. Products are normalized/deduplicated before classification. AI results require a matching product, normalized non-empty category, and confidence from 0 to 1; only confidence ≥0.80 is automatic. No provider is enabled by default.
+An Order ID is one order. The upload preserves `originalOrderId` and uses a conservative whitespace/Unicode-normalized value for uniqueness. Product rows remain intact, exact duplicate source rows are warned about, and conflicting order-level date, status, payment, courier, or source values stop generation for review.
 
-Order-level totals and percentages use distinct Order ID, including after filters. Full Product Price is treated as a unit price; revenue is Product Qty × Product Price. CSV exports prefix formula-leading values with an apostrophe.
+Product classification is deliberately manual in this phase: saved client mapping, then Needs Classification. Categories are client-managed; saved mappings are consulted in one batch against unique normalized products. No product rules, AI provider, AI dependency, or API key is used. A future Gemini phase should classify only unique unknown products and require client approval before saving a mapping.
+
+Full Product Price is a unit price, so row value is Product Qty × Product Price. Order metrics and percentages use distinct normalized Order IDs, including after filters. Report rows store the category used during generation, so changing a current mapping does not alter historical reports. CSV exports prefix formula-leading values with an apostrophe.
