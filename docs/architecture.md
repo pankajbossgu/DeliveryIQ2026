@@ -1,5 +1,7 @@
 # Architecture
 
-DeliveryIQ remains one Express application (`api/index.js`, `src/`, `public/`). `src/upload.js` parses bounded CSV/XLSX uploads; `src/product.js` supplies normalization, deterministic rules, and a replaceable server-side AI-provider boundary; `src/reports.js` calculates analytics and persists reports/normalized rows. No raw upload file is retained.
+DeliveryIQ is one Express/MongoDB/Vercel application: `api/index.js` exposes the Express entry point, `src/` holds server business rules and persistence, and `public/` holds the browser application. No raw upload file is retained.
 
-MongoDB is used when `MONGODB_URI` is configured; a non-durable in-memory fallback supports local demos. The server owns the temporary `DEFAULT_CLIENT_ID` scope. Authentication must replace it with server-derived identity before production multi-tenancy.
+`src/upload.js` parses bounded CSV/XLSX uploads (10 MB, 50,000 rows), validates the selected Simple or Full template, normalizes order/product identifiers, and performs order-level conflict checks. `src/mappings.js` provides tenant-scoped status mappings, product mappings, and product categories. `src/reports.js` creates immutable report-row snapshots and computes server-side analytics.
+
+MongoDB is used when `MONGODB_URI` is configured; a non-durable in-memory fallback supports demos and tests. The server owns the temporary `DEFAULT_CLIENT_ID` scope—request query parameters never choose a client. Real authentication must replace this development identity before production multi-tenancy.
