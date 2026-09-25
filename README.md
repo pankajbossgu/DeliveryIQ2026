@@ -2,7 +2,7 @@
 
 DeliveryIQ is a single-application e-commerce delivery intelligence platform. It will transform client CSV/XLSX order and delivery data into normalized delivery analytics, client-specific mappings, filtered reports, and exports.
 
-> **Current milestone:** deployable Express/Vercel foundation and documentation only. Product workflows are intentionally not implemented yet.
+> **Current milestone:** deployable application shell and upload-flow design. Upload processing, authentication, persistence, mappings, analytics, and exports are intentionally not implemented yet.
 
 ## Stack and layout
 
@@ -44,3 +44,4 @@ Deploy the repository as a single Vercel project. `/api/*` is handled by the Exp
 - [Architecture](docs/architecture.md)
 - [Database plan](docs/database.md)
 - [Deployment](docs/deployment.md)
+- [Inspection and foundation design](docs/inspection-design.md)
