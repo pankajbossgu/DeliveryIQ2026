@@ -38,23 +38,41 @@ test('Gemini product workflow deduplicates unknown products and never sends save
 test('invalid Gemini categories remain needs review and transient Gemini retries are bounded', async () => {
   const { GeminiProductClassifier, validateGeminiResults } = require('../src/product-classifier');
   assert.deepEqual(validateGeminiResults({ results: [{ product: 'Product A', category: 'Random Category' }] }, ['Product A'], ['Beauty']), []);
-  let requests = 0; const classifier = new GeminiProductClassifier({ apiKey: 'test-key', retries: 2, fetchImpl: async () => { requests += 1; return { ok: false, status: 429 }; } });
+  let requests = 0; const classifier = new GeminiProductClassifier({ apiKey: 'test-key', retries: 2, fetchImpl: async () => { requests += 1; return { ok: false, status: 429, statusText: 'Too Many Requests', text: async () => JSON.stringify({ error: { message: 'Quota exceeded' } }) }; } });
   const response = await classifier.classifyProducts(['Product A'], ['Beauty']);
   assert.equal(requests, 3); assert.deepEqual(response.failedProducts, ['Product A']);
 });
 test('Gemini uses the fixed Flash-Lite model and suggests categories for new clients', async () => {
   const { GeminiProductClassifier, GEMINI_MODEL } = require('../src/product-classifier');
   let request;
-  const classifier = new GeminiProductClassifier({ apiKey: 'server-only-key', model: 'not-allowed', fetchImpl: async (url, options) => { request = { url, body: JSON.parse(options.body) }; return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ results: [{ product: 'Ceramic Pour Over Set', category: 'Kitchenware', confidence: 0.91 }] }) }] } }] }) }; } });
+  const classifier = new GeminiProductClassifier({ apiKey: 'server-only-key', model: 'not-allowed', fetchImpl: async (url, options) => { request = { url, headers: options.headers, body: JSON.parse(options.body) }; return { ok: true, status: 200, statusText: 'OK', json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ results: [{ product: 'Ceramic Pour Over Set', category: 'Kitchenware', confidence: 0.91 }] }) }] } }] }) }; } });
   const response = await classifier.classifyProducts(['Ceramic Pour Over Set', 'Travel Neck Pillow'], []);
   assert.equal(GEMINI_MODEL, 'gemini-2.5-flash-lite');
   assert.match(request.url, /gemini-2\.5-flash-lite/); assert.doesNotMatch(request.url, /not-allowed/);
+  assert.equal(request.headers['x-goog-api-key'], 'server-only-key'); assert.doesNotMatch(request.url, /key=/);
   assert.deepEqual(request.body.contents[0].parts[0].text.includes('Suggest one concise'), true);
   assert.deepEqual(response.results, [{ product: 'Ceramic Pour Over Set', category: 'Kitchenware', confidence: 0.91, reason: null }]);
   const calls = []; const provider = { async classifyProducts(products, categories) { calls.push({ products, categories }); return { model: GEMINI_MODEL, results: [{ product: 'Ceramic Pour Over Set', category: 'Kitchenware' }, { product: 'Travel Neck Pillow', category: 'Travel Accessories' }], failedProducts: [] }; } };
   const classified = await classifyProducts(['Ceramic Pour Over Set', 'Travel Neck Pillow'], { mappings: [], categories: [], provider });
   assert.deepEqual(calls, [{ products: ['Ceramic Pour Over Set', 'Travel Neck Pillow'], categories: [] }]);
   assert.deepEqual(classified.items.map((item) => item.suggestedCategory), ['Kitchenware', 'Travel Accessories']);
+});
+test('Gemini uses the header-authenticated REST endpoint and parses two new products', async () => {
+  const { GeminiProductClassifier } = require('../src/product-classifier');
+  let request;
+  const classifier = new GeminiProductClassifier({ apiKey: 'test-key', fetchImpl: async (url, options) => { request = { url, headers: options.headers, body: JSON.parse(options.body) }; return { ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ candidates: [{ content: { parts: [{ text: '```json\n' + JSON.stringify({ suggestions: [{ product: 'Product A', category: 'Clothing', confidence: 0.9 }, { product: 'Product B', category: 'Home & Kitchen', reason: 'Bottle set' }] }) + '\n```' }] } }] }) }; } });
+  const result = await classifier.classifyProducts(['Product A', 'Product B'], ['Clothing', 'Home & Kitchen']);
+  assert.equal(request.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent');
+  assert.equal(request.headers['x-goog-api-key'], 'test-key');
+  assert.deepEqual(JSON.parse(request.body.contents[0].parts[0].text).availableCategories, ['Clothing', 'Home & Kitchen']);
+  assert.equal(result.results.length, 2); assert.deepEqual(result.failedProducts, []);
+});
+test('Gemini configuration and HTTP failures retain a safe diagnostic for manual fallback', async () => {
+  const { GeminiProductClassifier } = require('../src/product-classifier');
+  const missing = await new GeminiProductClassifier({ apiKey: '' }).classifyProducts(['Product A'], []);
+  assert.equal(missing.providerError, 'GEMINI_API_KEY is not configured.');
+  const rejected = await new GeminiProductClassifier({ apiKey: 'invalid', retries: 0, fetchImpl: async () => ({ ok: false, status: 403, statusText: 'Forbidden', text: async () => JSON.stringify({ error: { message: 'API key is not authorized for this model' } }) }) }).classifyProducts(['Product A'], []);
+  assert.match(rejected.providerError, /403 Forbidden/); assert.deepEqual(rejected.failedProducts, ['Product A']);
 });
 test('manual, modified, and rejected review outcomes do not persist rejected AI categories', async () => {
   const store = new MappingStore({ mongoUri: null }); await store.saveCategory('client-a', 'Beauty'); await store.saveCategory('client-a', 'Personal Care');
