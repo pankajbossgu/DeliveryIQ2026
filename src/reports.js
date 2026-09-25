@@ -28,7 +28,8 @@ const universalOccurrenceSchema = new mongoose.Schema({
   totalQuantity: Number, totalValue: Number, sourceFileName: String, templateType: String
 }, { timestamps: true, versionKey: false });
 universalOccurrenceSchema.index({ clientId: 1, reportId: 1, canonicalOrderId: 1 }, { unique: true });
-universalOccurrenceSchema.index({ clientId: 1, canonicalOrderId: 1, reportCompletedAt: -1 });
+// Serves tenant-scoped history's deterministic completion-time/report-ID ordering.
+universalOccurrenceSchema.index({ clientId: 1, canonicalOrderId: 1, reportCompletedAt: -1, reportId: -1 });
 const universalSyncSchema = new mongoose.Schema({
   clientId: { type: String, required: true }, reportId: { type: String, required: true },
   status: { type: String, required: true, enum: ['processing', 'completed', 'failed'] }, startedAt: Date, completedAt: Date,
@@ -53,10 +54,63 @@ function universalProjection(report, canonicalOrderId, rows) {
 }
 function groupUniversalRows(rows) { const grouped = new Map(); for (const row of rows) { const canonicalOrderId = normalizeOrderId(row.normalizedOrderId || row.orderId || row.originalOrderId); if (!canonicalOrderId) continue; const values = grouped.get(canonicalOrderId) || []; values.push(row); grouped.set(canonicalOrderId, values); } return grouped; }
 function isLaterProjection(existing, candidate) { const currentTime = new Date(existing.latestReportCompletedAt).getTime(); const candidateTime = new Date(candidate.latestReportCompletedAt).getTime(); return candidateTime > currentTime || candidateTime === currentTime && String(candidate.latestReportId) > String(existing.latestReportId); }
+function escapeRegex(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function dateRange(from, to) { const range = {}; if (from) range.$gte = from; if (to) range.$lte = to; return range; }
+function universalSort(sortBy, direction, defaultField) { const field = sortBy || defaultField; const value = direction === 'asc' ? 1 : -1; return field === 'canonicalOrderId' ? { canonicalOrderId: value } : { [field]: value, canonicalOrderId: 1 }; }
+function memorySort(sort) { const entries = Object.entries(sort); return (left, right) => { for (const [field, direction] of entries) { const a = left[field] instanceof Date ? left[field].getTime() : left[field]; const b = right[field] instanceof Date ? right[field].getTime() : right[field]; if (a === b) continue; if (a === undefined || a === null) return -direction; if (b === undefined || b === null) return direction; return a > b ? direction : -direction; } return 0; }; }
+function matchesUniversal(item, filters) { const completed = item.latestReportCompletedAt || item.reportCompletedAt; return (!filters.search || item.canonicalOrderId.toLowerCase().startsWith(filters.search.toLowerCase())) && (!filters.status || item.originalStatus === filters.status) && (!filters.statusCategory || item.statusCategory === filters.statusCategory) && (!filters.fromDate || item.orderDate >= filters.fromDate) && (!filters.toDate || item.orderDate <= filters.toDate) && (!filters.reportFromDate || new Date(completed) >= new Date(filters.reportFromDate)) && (!filters.reportToDate || new Date(completed) <= new Date(filters.reportToDate)); }
+function buckets(items, field) { return Object.fromEntries(items.filter((item) => item._id).map((item) => [item._id, item.count])); }
+function summaryFromBuckets(summary) { const total = summary.totals?.[0] || {}; return { totalOrders: total.totalOrders || 0, totalValue: Number((total.totalValue || 0).toFixed(2)), totalQuantity: total.totalQuantity || 0, byStatusCategory: buckets(summary.byStatusCategory || []), byStatus: buckets(summary.byStatus || []) }; }
+function summaryFromOrders(orders) { const group = (field) => orders.reduce((result, order) => { if (order[field]) result[order[field]] = (result[order[field]] || 0) + 1; return result; }, {}); return { totalOrders: orders.length, totalValue: Number(orders.reduce((total, order) => total + (order.totalValue || 0), 0).toFixed(2)), totalQuantity: orders.reduce((total, order) => total + (order.totalQuantity || 0), 0), byStatusCategory: group('statusCategory'), byStatus: group('originalStatus') }; }
 class UniversalStore {
   constructor({ mongoUri = process.env.MONGODB_URI } = {}) { this.mongoUri = mongoUri; this.connection = null; this.orders = new Map(); this.occurrences = new Map(); this.syncs = new Map(); }
   async database() { if (!this.mongoUri || this.mongoUri.includes('127.0.0.1:27017/deliveryiq2026') && process.env.NODE_ENV === 'test') return null; if (!this.connection) this.connection = mongoose.connect(this.mongoUri, { serverSelectionTimeoutMS: 1500 }).catch(() => null); return this.connection; }
   key(clientId, value) { return `${clientId}\u001f${value}`; }
+  // These read methods are deliberately the only public Universal API surface. Filters
+  // are built by the HTTP layer from an allow-list; every database predicate starts
+  // with the server-resolved clientId.
+  async listOrders(clientId, { page, limit, search, status, statusCategory, fromDate, toDate, reportFromDate, reportToDate, sortBy, sortDirection }) {
+    const filter = { clientId };
+    if (search) filter.canonicalOrderId = { $regex: `^${escapeRegex(search)}`, $options: 'i' };
+    if (status) filter.originalStatus = status;
+    if (statusCategory) filter.statusCategory = statusCategory;
+    if (fromDate || toDate) filter.orderDate = dateRange(fromDate, toDate);
+    if (reportFromDate || reportToDate) filter.latestReportCompletedAt = dateRange(reportFromDate, reportToDate);
+    const sort = universalSort(sortBy, sortDirection, 'latestReportCompletedAt');
+    if (await this.database()) {
+      const [orders, total] = await Promise.all([UniversalOrder.find(filter).sort(sort).skip((page - 1) * limit).limit(limit).lean(), UniversalOrder.countDocuments(filter)]);
+      return { orders, total };
+    }
+    const orders = [...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, { search, status, statusCategory, fromDate, toDate, reportFromDate, reportToDate })).sort(memorySort(sort));
+    return { orders: orders.slice((page - 1) * limit, page * limit), total: orders.length };
+  }
+  async orderDetail(clientId, canonicalOrderId) {
+    if (await this.database()) return UniversalOrder.findOne({ clientId, canonicalOrderId }).lean();
+    return this.orders.get(this.key(clientId, canonicalOrderId)) || null;
+  }
+  async orderHistory(clientId, canonicalOrderId, { page, limit, fromDate, toDate, reportFromDate, reportToDate }) {
+    const filter = { clientId, canonicalOrderId };
+    if (fromDate || toDate) filter.orderDate = dateRange(fromDate, toDate);
+    if (reportFromDate || reportToDate) filter.reportCompletedAt = dateRange(reportFromDate, reportToDate);
+    const sort = { reportCompletedAt: -1, reportId: -1 };
+    if (await this.database()) {
+      const [occurrences, total] = await Promise.all([UniversalOrderOccurrence.find(filter).sort(sort).skip((page - 1) * limit).limit(limit).lean(), UniversalOrderOccurrence.countDocuments(filter)]);
+      return { occurrences, total };
+    }
+    const occurrences = [...this.occurrences.values()].filter((item) => item.clientId === clientId && item.canonicalOrderId === canonicalOrderId && matchesUniversal(item, { fromDate, toDate, reportFromDate, reportToDate })).sort(memorySort(sort));
+    return { occurrences: occurrences.slice((page - 1) * limit, page * limit), total: occurrences.length };
+  }
+  async summary(clientId) {
+    if (await this.database()) {
+      const [summary] = await UniversalOrder.aggregate([{ $match: { clientId } }, { $facet: {
+        totals: [{ $group: { _id: null, totalOrders: { $sum: 1 }, totalValue: { $sum: { $ifNull: ['$totalValue', 0] } }, totalQuantity: { $sum: { $ifNull: ['$totalQuantity', 0] } } } }],
+        byStatusCategory: [{ $group: { _id: '$statusCategory', count: { $sum: 1 } } }], byStatus: [{ $group: { _id: '$originalStatus', count: { $sum: 1 } } }]
+      } }]);
+      return summaryFromBuckets(summary || {});
+    }
+    const orders = [...this.orders.values()].filter((order) => order.clientId === clientId);
+    return summaryFromOrders(orders);
+  }
   async markFailed(clientId, reportId) {
     const error = 'Universal report synchronization could not be completed.';
     if (await this.database()) {

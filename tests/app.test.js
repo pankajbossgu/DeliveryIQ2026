@@ -66,3 +66,25 @@ test('incomplete reports do not synchronize and a universal sync failure does no
   const warn = console.warn; console.warn = () => {}; let report; try { report = await reports.create('a', { templateType: 'full', sourceFileName: 'orders.csv', rows: [universalRow('1')] }); } finally { console.warn = warn; }
   assert.equal(report.reportStatus, 'completed'); assert.equal((await reports.list('a')).length, 1); assert.equal(universal.syncs.get(universal.key('a', report.reportId)).status, 'failed');
 });
+
+test('universal read APIs paginate, validate, sort, and remain scoped to the server client', async () => {
+  const app = require('../src/app'); const previousStore = app.locals.universalStore; const store = new UniversalStore({ mongoUri: null }); const client = app.locals.clientId; app.locals.universalStore = store;
+  await store.syncCompletedReport(client, universalReport(client, 'R1', '2026-02-01T00:00:00Z'), [universalRow('ORD-2', '2026-01-02'), universalRow('ORD-1', '2026-01-01')]);
+  await store.syncCompletedReport(client, universalReport(client, 'R2', '2026-02-02T00:00:00Z'), [universalRow('ORD-1', '2026-01-03', 'New', 2)]);
+  await store.syncCompletedReport('other-client', universalReport('other-client', 'R3', '2026-02-03T00:00:00Z'), [universalRow('ORD-OTHER')]);
+  const server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)); }); const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    let response = await fetch(`${base}/api/universal/orders?limit=1&sortBy=canonicalOrderId&sortDirection=asc&clientId=other-client`); let body = await response.json();
+    assert.equal(response.status, 200); assert.equal(body.orders[0].canonicalOrderId, 'ORD-1'); assert.deepEqual(body.pagination, { page: 1, limit: 1, total: 2, totalPages: 2 });
+    response = await fetch(`${base}/api/universal/orders?search=ORD-2`); body = await response.json(); assert.equal(body.orders.length, 1); assert.equal(body.orders[0].canonicalOrderId, 'ORD-2');
+    response = await fetch(`${base}/api/universal/orders?limit=101`); assert.equal(response.status, 422);
+    response = await fetch(`${base}/api/universal/orders?page=-1`); assert.equal(response.status, 422);
+    response = await fetch(`${base}/api/universal/orders?fromDate=2026-99-99`); assert.equal(response.status, 422);
+    response = await fetch(`${base}/api/universal/orders?sortBy[$ne]=createdAt`); assert.equal(response.status, 422);
+    response = await fetch(`${base}/api/universal/orders/ORD-1`); body = await response.json(); assert.equal(body.order.latestReportId, 'R2');
+    response = await fetch(`${base}/api/universal/orders/ORD-OTHER`); assert.equal(response.status, 404);
+    response = await fetch(`${base}/api/universal/orders/ORD-1/history?limit=1`); body = await response.json(); assert.equal(body.occurrences[0].reportId, 'R2'); assert.equal(body.pagination.total, 2);
+    response = await fetch(`${base}/api/universal/summary`); body = await response.json(); assert.deepEqual(body.summary, { totalOrders: 2, totalValue: 30, totalQuantity: 3, byStatusCategory: { Delivered: 2 }, byStatus: { Delivered: 2 } });
+    response = await fetch(`${base}/api/universal/orders/does-not-exist/history`); assert.equal(response.status, 404);
+  } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
+});
