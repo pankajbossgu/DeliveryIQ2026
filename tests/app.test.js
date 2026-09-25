@@ -109,3 +109,28 @@ test('validation returns grouped unmapped reviews and mapping APIs validate cate
     response = await fetch(`http://127.0.0.1:${port}/api/mappings/status`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'Anything', category: 'UNMAPPED' }) }); assert.equal(response.status, 422);
   } finally { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
 });
+
+const { aggregate, applyFilters, csv: reportCsv } = require('../src/reports');
+const { classifyProducts, normalizeProductName } = require('../src/product');
+test('simple and full templates validate as CSV and XLSX', () => {
+  for (const type of ['simple', 'full']) for (const extension of ['csv', 'xlsx']) {
+    const { csvTemplate, xlsxTemplate } = require('../src/upload');
+    const buffer = extension === 'csv' ? Buffer.from(csvTemplate(type)) : xlsxTemplate(type);
+    const result = validateUpload({ originalname: `template.${extension}`, buffer }, { templateType: type });
+    assert.equal(result.success, true, `${type} ${extension}`);
+    assert.equal(result.templateType, type);
+  }
+});
+test('product intelligence deduplicates, applies mappings/rules, and keeps unavailable AI products for review', async () => {
+  assert.equal(normalizeProductName(" men's cotton t-shirt "), 'mens cotton t shirt');
+  const saved = await classifyProducts(['Mystery Box', 'Mystery Box', 'T-Shirt'], { mappings: [{ normalizedValue: 'mystery box', category: 'Gift Boxes' }] });
+  assert.equal(saved.items.length, 2); assert.equal(saved.items.find((item) => item.value === 'Mystery Box').mappingSource, 'client'); assert.equal(saved.items.find((item) => item.value === 'T-Shirt').category, 'Clothing');
+  const unavailable = await classifyProducts(['Unknowable Item'], { provider: { classifyProducts: async () => { throw new Error('offline'); } } });
+  assert.equal(unavailable.providerUnavailable, true); assert.equal(unavailable.items[0].classificationRequired, true);
+});
+test('report calculator uses distinct orders, filters with the correct denominator, and gates full dimensions', () => {
+  const rows = [['1', 'Delivered', 'A', 'COD'], ['1', 'Delivered', 'B', 'COD'], ['2', 'Delivered', 'A', 'UPI'], ['3', 'NDR', 'A', 'COD'], ['4', 'RTO', 'A', 'COD'], ['5', 'In Transit', 'A', 'COD']].map(([orderId, category, originalProductName, paymentMode], index) => ({ orderId, category, originalProductName, orderDate: `2026-09-0${index + 1}`, paymentMode, productCategory: 'Clothing', quantity: 1, rowValue: 10, courier: 'C', orderSource: 'Store' }));
+  const all = aggregate(rows, 'full'); assert.equal(all.totalOrders, 5); assert.equal(all.summary.Delivered, 2); assert.equal(all.analytics.product.find((item) => item.name === 'A').orders, 5);
+  const filtered = aggregate(applyFilters(rows, { paymentMode: 'UPI' }, 'full'), 'full'); assert.equal(filtered.analytics.statusDistribution.percentages.Delivered, 100);
+  assert.equal(aggregate(rows, 'simple').analytics.courier, undefined); assert.match(reportCsv([{ orderId: '=CMD', orderDate: '2026-09-01', category: 'Delivered', originalProductName: 'A', productCategory: 'C', paymentMode: 'COD' }], 'simple'), /'=CMD/);
+});
