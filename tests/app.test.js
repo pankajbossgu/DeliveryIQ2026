@@ -48,6 +48,11 @@ test('universal sync groups product rows, keeps occurrences immutable, and is id
   await store.syncCompletedReport('a', universalReport('a', 'R2', '2026-02-02T00:00:00Z'), [universalRow('Order 1')]);
   assert.equal(store.occurrences.size, 2);
 });
+test('concurrent completed-report synchronization creates one occurrence per canonical order', async () => {
+  const store = new UniversalStore({ mongoUri: null }); const report = universalReport('a', 'R-concurrent', '2026-02-01T00:00:00Z');
+  await Promise.all(Array.from({ length: 8 }, () => store.syncCompletedReport('a', report, [universalRow(' Order 1 ', '2026-01-01', 'One'), universalRow('Order 1', '2026-01-01', 'Two')])));
+  assert.equal(store.orders.size, 1); assert.equal(store.occurrences.size, 1); assert.equal(store.syncs.get(store.key('a', report.reportId)).status, 'completed');
+});
 test('universal latest projection uses only completion time then reportId and isolates clients', async () => {
   const store = new UniversalStore({ mongoUri: null });
   await store.syncCompletedReport('a', universalReport('a', 'R9', '2026-03-02T00:00:00Z'), [universalRow('same', '2000-01-01', 'New')]);
@@ -65,6 +70,20 @@ test('incomplete reports do not synchronize and a universal sync failure does no
   universal.syncCompletedReport = async () => { throw new Error('storage unavailable'); };
   const warn = console.warn; console.warn = () => {}; let report; try { report = await reports.create('a', { templateType: 'full', sourceFileName: 'orders.csv', rows: [universalRow('1')] }); } finally { console.warn = warn; }
   assert.equal(report.reportStatus, 'completed'); assert.equal((await reports.list('a')).length, 1); assert.equal(universal.syncs.get(universal.key('a', report.reportId)).status, 'failed');
+});
+
+test('completed report lifecycle persists canonical rows, then retries a failed universal projection without duplicates', async () => {
+  const universal = new UniversalStore({ mongoUri: null }); const reports = new ReportStore({ mongoUri: null, universalStore: universal });
+  const originalSync = universal.syncCompletedReport.bind(universal); let attempts = 0;
+  universal.syncCompletedReport = async (...args) => { attempts += 1; if (attempts === 1) throw new Error('temporary projection failure'); return originalSync(...args); };
+  const warn = console.warn; console.warn = () => {}; let report;
+  try { report = await reports.create('a', { templateType: 'full', sourceFileName: 'orders.csv', rows: [universalRow(' Order 100 ', '2026-01-01', 'One'), universalRow('Order 100', '2026-01-01', 'Two', 2)] }); } finally { console.warn = warn; }
+  assert.equal(report.reportStatus, 'completed'); assert.equal(reports.rows.get(report.reportId)[0].orderDate, '2026-01-01');
+  assert.equal(universal.syncs.get(universal.key('a', report.reportId)).status, 'failed');
+  const retried = await reports.retryUniversal('a', report.reportId);
+  assert.equal(retried.status, 'completed'); assert.equal(universal.orders.size, 1); assert.equal(universal.occurrences.size, 1); assert.equal([...universal.orders.values()][0].products.length, 2);
+  const duplicateRetry = await reports.retryUniversal('a', report.reportId);
+  assert.equal(duplicateRetry.alreadyCompleted, true); assert.equal(universal.occurrences.size, 1);
 });
 
 test('universal read APIs paginate, validate, sort, and remain scoped to the server client', async () => {
