@@ -20,6 +20,11 @@ const universalOrderSchema = new mongoose.Schema({
 }, { timestamps: true, versionKey: false });
 universalOrderSchema.index({ clientId: 1, canonicalOrderId: 1 }, { unique: true });
 universalOrderSchema.index({ clientId: 1, latestReportCompletedAt: -1 });
+// These match the two date-filtered current-order analytics views. Product lines
+// are aggregated only after the tenant/date match, so no multikey index is needed.
+universalOrderSchema.index({ clientId: 1, orderDate: 1 });
+universalOrderSchema.index({ clientId: 1, statusCategory: 1 });
+universalOrderSchema.index({ clientId: 1, originalStatus: 1 });
 const universalOccurrenceSchema = new mongoose.Schema({
   clientId: { type: String, required: true, immutable: true }, canonicalOrderId: { type: String, required: true, immutable: true }, originalOrderId: String,
   reportId: { type: String, required: true, immutable: true }, reportCompletedAt: { type: Date, required: true, immutable: true },
@@ -62,6 +67,8 @@ function matchesUniversal(item, filters) { const completed = item.latestReportCo
 function buckets(items, field) { return Object.fromEntries(items.filter((item) => item._id).map((item) => [item._id, item.count])); }
 function summaryFromBuckets(summary) { const total = summary.totals?.[0] || {}; return { totalOrders: total.totalOrders || 0, totalValue: Number((total.totalValue || 0).toFixed(2)), totalQuantity: total.totalQuantity || 0, byStatusCategory: buckets(summary.byStatusCategory || []), byStatus: buckets(summary.byStatus || []) }; }
 function summaryFromOrders(orders) { const group = (field) => orders.reduce((result, order) => { if (order[field]) result[order[field]] = (result[order[field]] || 0) + 1; return result; }, {}); return { totalOrders: orders.length, totalValue: Number(orders.reduce((total, order) => total + (order.totalValue || 0), 0).toFixed(2)), totalQuantity: orders.reduce((total, order) => total + (order.totalQuantity || 0), 0), byStatusCategory: group('statusCategory'), byStatus: group('originalStatus') }; }
+function universalFilter(clientId, { search, status, statusCategory, fromDate, toDate, reportFromDate, reportToDate } = {}) { const filter = { clientId }; if (search) filter.canonicalOrderId = { $regex: `^${escapeRegex(search)}`, $options: 'i' }; if (status) filter.originalStatus = status; if (statusCategory) filter.statusCategory = statusCategory; if (fromDate || toDate) filter.orderDate = dateRange(fromDate, toDate); if (reportFromDate || reportToDate) filter.latestReportCompletedAt = dateRange(reportFromDate, reportToDate); return filter; }
+function analyticsFromOrders(orders) { const summary = summaryFromOrders(orders); const total = summary.totalOrders; const grouped = (field) => Object.entries(summary[field] || {}).map(([name, count]) => ({ name, count, percentage: percent(count, total) })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)); const trendMap = new Map(); const productMap = new Map(); orders.forEach((order) => { if (order.orderDate) { const item = trendMap.get(order.orderDate) || { date: order.orderDate, count: 0, value: 0 }; item.count += 1; item.value += Number(order.totalValue || 0); trendMap.set(order.orderDate, item); } (order.products || []).forEach((line) => { const name = line.originalProductName || line.normalizedProductName || 'Unmapped product'; const item = productMap.get(name) || { name, quantity: 0, value: 0, orderIds: new Set() }; item.quantity += Number(line.quantity || 0); item.value += Number(line.rowValue || 0); item.orderIds.add(order.canonicalOrderId); productMap.set(name, item); }); }); const products = [...productMap.values()].map((item) => ({ name: item.name, quantity: item.quantity, value: Number(item.value.toFixed(2)), orderCount: item.orderIds.size })).sort((a, b) => b.quantity - a.quantity || b.value - a.value || a.name.localeCompare(b.name)).slice(0, 10); const rto = (summary.byStatusCategory.RTO || 0); return { summary: { ...summary, rtoOrders: rto, rtoPercentage: percent(rto, total), rtoValue: Number(orders.filter((order) => order.statusCategory === 'RTO').reduce((sum, order) => sum + Number(order.totalValue || 0), 0).toFixed(2)) }, statusCategories: grouped('byStatusCategory'), statuses: grouped('byStatus'), trends: [...trendMap.values()].map((item) => ({ ...item, value: Number(item.value.toFixed(2)) })).sort((a, b) => a.date.localeCompare(b.date)), products, attention: rto ? [{ type: 'RTO', count: rto, percentage: percent(rto, total), value: Number(orders.filter((order) => order.statusCategory === 'RTO').reduce((sum, order) => sum + Number(order.totalValue || 0), 0).toFixed(2)) }] : [] }; }
 class UniversalStore {
   constructor({ mongoUri = process.env.MONGODB_URI } = {}) { this.mongoUri = mongoUri; this.connection = null; this.orders = new Map(); this.occurrences = new Map(); this.syncs = new Map(); }
   async database() { if (!this.mongoUri || this.mongoUri.includes('127.0.0.1:27017/deliveryiq2026') && process.env.NODE_ENV === 'test') return null; if (!this.connection) this.connection = mongoose.connect(this.mongoUri, { serverSelectionTimeoutMS: 1500 }).catch(() => null); return this.connection; }
@@ -70,12 +77,7 @@ class UniversalStore {
   // are built by the HTTP layer from an allow-list; every database predicate starts
   // with the server-resolved clientId.
   async listOrders(clientId, { page, limit, search, status, statusCategory, fromDate, toDate, reportFromDate, reportToDate, sortBy, sortDirection }) {
-    const filter = { clientId };
-    if (search) filter.canonicalOrderId = { $regex: `^${escapeRegex(search)}`, $options: 'i' };
-    if (status) filter.originalStatus = status;
-    if (statusCategory) filter.statusCategory = statusCategory;
-    if (fromDate || toDate) filter.orderDate = dateRange(fromDate, toDate);
-    if (reportFromDate || reportToDate) filter.latestReportCompletedAt = dateRange(reportFromDate, reportToDate);
+    const filter = universalFilter(clientId, { search, status, statusCategory, fromDate, toDate, reportFromDate, reportToDate });
     const sort = universalSort(sortBy, sortDirection, 'latestReportCompletedAt');
     if (await this.database()) {
       const [orders, total] = await Promise.all([UniversalOrder.find(filter).sort(sort).skip((page - 1) * limit).limit(limit).lean(), UniversalOrder.countDocuments(filter)]);
@@ -100,16 +102,35 @@ class UniversalStore {
     const occurrences = [...this.occurrences.values()].filter((item) => item.clientId === clientId && item.canonicalOrderId === canonicalOrderId && matchesUniversal(item, { fromDate, toDate, reportFromDate, reportToDate })).sort(memorySort(sort));
     return { occurrences: occurrences.slice((page - 1) * limit, page * limit), total: occurrences.length };
   }
-  async summary(clientId) {
+  async summary(clientId, filters = {}) {
+    const filter = universalFilter(clientId, filters);
     if (await this.database()) {
-      const [summary] = await UniversalOrder.aggregate([{ $match: { clientId } }, { $facet: {
+      const [summary] = await UniversalOrder.aggregate([{ $match: filter }, { $facet: {
         totals: [{ $group: { _id: null, totalOrders: { $sum: 1 }, totalValue: { $sum: { $ifNull: ['$totalValue', 0] } }, totalQuantity: { $sum: { $ifNull: ['$totalQuantity', 0] } } } }],
         byStatusCategory: [{ $group: { _id: '$statusCategory', count: { $sum: 1 } } }], byStatus: [{ $group: { _id: '$originalStatus', count: { $sum: 1 } } }]
       } }]);
       return summaryFromBuckets(summary || {});
     }
-    const orders = [...this.orders.values()].filter((order) => order.clientId === clientId);
+    const orders = [...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, filters));
     return summaryFromOrders(orders);
+  }
+  async analytics(clientId, filters = {}) {
+    const filter = universalFilter(clientId, filters);
+    if (await this.database()) {
+      const [result] = await UniversalOrder.aggregate([{ $match: filter }, { $facet: {
+        totals: [{ $group: { _id: null, totalOrders: { $sum: 1 }, totalValue: { $sum: { $ifNull: ['$totalValue', 0] } }, totalQuantity: { $sum: { $ifNull: ['$totalQuantity', 0] } }, rtoOrders: { $sum: { $cond: [{ $eq: ['$statusCategory', 'RTO'] }, 1, 0] } }, rtoValue: { $sum: { $cond: [{ $eq: ['$statusCategory', 'RTO'] }, { $ifNull: ['$totalValue', 0] }, 0] } } } }],
+        // Facets are intentionally bounded; products are reduced to the top ten after grouping.
+        statusCategories: [{ $group: { _id: '$statusCategory', count: { $sum: 1 } } }, { $sort: { count: -1, _id: 1 } }],
+        statuses: [{ $group: { _id: '$originalStatus', count: { $sum: 1 } } }, { $sort: { count: -1, _id: 1 } }],
+        trends: [{ $match: { orderDate: { $type: 'string', $ne: '' } } }, { $group: { _id: '$orderDate', count: { $sum: 1 }, value: { $sum: { $ifNull: ['$totalValue', 0] } } } }, { $sort: { _id: 1 } }],
+        products: [{ $unwind: '$products' }, { $group: { _id: { name: { $ifNull: ['$products.originalProductName', '$products.normalizedProductName'] }, orderId: '$canonicalOrderId' }, quantity: { $sum: { $ifNull: ['$products.quantity', 0] } }, value: { $sum: { $ifNull: ['$products.rowValue', 0] } } } }, { $group: { _id: '$_id.name', quantity: { $sum: '$quantity' }, value: { $sum: '$value' }, orderCount: { $sum: 1 } } }, { $sort: { quantity: -1, value: -1, _id: 1 } }, { $limit: 10 }]
+      } }]);
+      const total = result?.totals?.[0] || {}; const totalOrders = total.totalOrders || 0;
+      const breakdown = (items) => (items || []).filter((item) => item._id).map((item) => ({ name: item._id, count: item.count, percentage: percent(item.count, totalOrders) }));
+      const summary = { totalOrders, totalValue: Number((total.totalValue || 0).toFixed(2)), totalQuantity: total.totalQuantity || 0, byStatusCategory: buckets(result?.statusCategories || []), byStatus: buckets(result?.statuses || []), rtoOrders: total.rtoOrders || 0, rtoPercentage: percent(total.rtoOrders || 0, totalOrders), rtoValue: Number((total.rtoValue || 0).toFixed(2)) };
+      return { summary, statusCategories: breakdown(result?.statusCategories), statuses: breakdown(result?.statuses), trends: (result?.trends || []).map((item) => ({ date: item._id, count: item.count, value: Number((item.value || 0).toFixed(2)) })), products: (result?.products || []).map((item) => ({ name: item._id || 'Unmapped product', quantity: item.quantity || 0, value: Number((item.value || 0).toFixed(2)), orderCount: item.orderCount || 0 })), attention: total.rtoOrders ? [{ type: 'RTO', count: total.rtoOrders, percentage: percent(total.rtoOrders, totalOrders), value: Number((total.rtoValue || 0).toFixed(2)) }] : [] };
+    }
+    return analyticsFromOrders([...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, filters)));
   }
   async markFailed(clientId, reportId) {
     const error = 'Universal report synchronization could not be completed.';
