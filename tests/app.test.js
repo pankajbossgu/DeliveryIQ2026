@@ -17,3 +17,17 @@ test('manual fallback requires both categories and preserves status engine', asy
 test('reports snapshot, filter, and export both taxonomy levels', () => { const rows = [{ normalizedOrderId: '1', category: 'Delivered', originalProductName: 'S-Famw Nail Serum 349', masterCategory: 'Beauty & Personal Care', productCategory: 'Nail Serum', quantity: 1, rowValue: 349 }]; const report = aggregate(rows, 'full'); assert.equal(report.analytics.masterCategory[0].name, 'Beauty & Personal Care'); assert.equal(applyFilters(rows, { masterCategory: 'Beauty & Personal Care' }, 'full').length, 1); assert.match(csv(rows, 'full'), /Master Category/); });
 test('upload validation never calls Gemini before processing and processing calls it for unknown products', async () => { let calls = 0; const file = { originalname: 'orders.csv', buffer: Buffer.from('Order ID,Order Date,Status,Product Name,Order Quantity,Product Price,Payment Mode,Courier,Order Source\n1,2026-01-01,Delivered,S-Famw Nail Serum 349,1,10,COD,C,Store\n') }; const validated = validateUpload(file, { classify: false }); assert.equal(validated.success, true); const result = await processValidatedUpload(validated, { productClassifier: { classifyProducts(products) { calls += 1; return { results: [{ product: products[0], masterCategory: 'Beauty & Personal Care', productCategory: 'Nail Serum' }] }; } } }); assert.equal(calls, 1); assert.equal(result.classifications.products[0].mappingSource, 'ai-suggested'); });
 test('Gemini uses the hardcoded Flash-Lite model and GEMINI_API_KEY only', () => { const classifier = new GeminiProductClassifier({ apiKey: 'key', model: 'other' }); assert.equal(classifier.model, 'gemini-2.5-flash-lite'); });
+test('report process keeps a complete review snapshot and only one active process', async () => {
+  const { ProcessingStore } = require('../src/reports'); const store = new ProcessingStore({ mongoUri: null });
+  const input = { summary: { detectedProducts: 2 }, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] };
+  const first = await store.createValidated('client-a', input, 'request-a');
+  const second = await store.createValidated('client-a', input, 'request-b');
+  assert.equal(second.existing, true); assert.equal(second.job.processId, first.job.processId);
+  first.job.status = 'review_required'; first.job.result = { classifications: { statuses: [], products: [{ value: 'A', classificationRequired: true }, { value: 'B', classificationRequired: true }] } }; await store.save(first.job);
+  await store.updateReview('client-a', first.job.processId, 'product', 'A', { status: 'AI Approved', classificationRequired: false, masterCategory: 'Beauty', productCategory: 'Serum' });
+  const restored = await store.get('client-a', first.job.processId); assert.equal(restored.result.classifications.products.length, 2); assert.equal(restored.result.classifications.products[0].classificationRequired, false); assert.equal(restored.result.classifications.products[1].classificationRequired, true);
+});
+test('CSV preserves actual courier status separately from normalized status category', () => {
+  const output = csv([{ orderId: 'ORD001', orderDate: '2026-01-01', originalStatus: 'Out for Delivery', category: 'In Transit', originalProductName: 'Nail Serum', masterCategory: 'Beauty', productCategory: 'Nail Serum', paymentMode: 'COD' }], 'simple');
+  assert.match(output, /Actual Status/); assert.match(output, /Status Category/); assert.match(output, /"Out for Delivery","In Transit"/);
+});
