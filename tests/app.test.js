@@ -104,6 +104,10 @@ test('universal read APIs paginate, validate, sort, and remain scoped to the ser
     response = await fetch(`${base}/api/universal/orders/ORD-OTHER`); assert.equal(response.status, 404);
     response = await fetch(`${base}/api/universal/orders/ORD-1/history?limit=1`); body = await response.json(); assert.equal(body.occurrences[0].reportId, 'R2'); assert.equal(body.pagination.total, 2);
     response = await fetch(`${base}/api/universal/summary`); body = await response.json(); assert.deepEqual(body.summary, { totalOrders: 2, totalValue: 30, totalQuantity: 3, byStatusCategory: { Delivered: 2 }, byStatus: { Delivered: 2 } });
+    response = await fetch(`${base}/api/universal/summary?search=ORD-2&clientId=other-client`); body = await response.json(); assert.equal(body.summary.totalOrders, 1); assert.equal(body.summary.totalQuantity, 1);
+    response = await fetch(`${base}/api/universal/analytics?status=Delivered&fromDate=2026-01-02&toDate=2026-01-02&reportFromDate=2026-02-01&reportToDate=2026-02-01&clientId=other-client`); body = await response.json(); assert.equal(body.analytics.summary.totalOrders, 1); assert.equal(body.analytics.statusCategories[0].percentage, 100); assert.equal(body.analytics.trends[0].date, '2026-01-02');
+    response = await fetch(`${base}/api/universal/analytics?fromDate=2026-01-02&toDate=2026-01-01`); assert.equal(response.status, 422);
+    response = await fetch(`${base}/api/universal/analytics?status[$ne]=Delivered`); assert.equal(response.status, 422);
     response = await fetch(`${base}/api/universal/orders/does-not-exist/history`); assert.equal(response.status, 404);
   } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
 });
@@ -115,4 +119,22 @@ test('Universal Report frontend consumes the read-only current-state and history
   assert.match(html, /data-page="universal"/); assert.match(html, /id="universal-filters"/); assert.match(html, /CURRENT ORDER STATE/);
   assert.match(script, /\/api\/universal\/summary/); assert.match(script, /\/api\/universal\/orders\?/); assert.match(script, /\/history\?limit=25/);
   assert.match(script, /HISTORICAL OBSERVATIONS/);
+});
+
+test('universal analytics are tenant-scoped, filter-aware, and preserve product-line quantities', async () => {
+  const store = new UniversalStore({ mongoUri: null });
+  await store.syncCompletedReport('a', universalReport('a', 'A1', '2026-02-01T00:00:00Z'), [
+    { ...universalRow('A-RTO', '2026-01-01', 'Widget', 2), category: 'RTO', originalStatus: 'Returned' },
+    { ...universalRow('A-RTO', '2026-01-01', 'Gadget', 1), category: 'RTO', originalStatus: 'Returned' },
+    universalRow('A-DEL', '2026-01-02', 'Widget', 3)
+  ]);
+  await store.syncCompletedReport('b', universalReport('b', 'B1', '2026-02-01T00:00:00Z'), [universalRow('B-ONLY', '2026-01-01', 'Secret', 99)]);
+  const all = await store.analytics('a');
+  assert.equal(all.summary.totalOrders, 2); assert.equal(all.summary.rtoOrders, 1); assert.equal(all.summary.rtoPercentage, 50);
+  assert.deepEqual(all.statusCategories.find((item) => item.name === 'RTO'), { name: 'RTO', count: 1, percentage: 50 });
+  assert.equal(all.products.find((item) => item.name === 'Widget').quantity, 5);
+  assert.equal(all.products.find((item) => item.name === 'Widget').orderCount, 2);
+  const filtered = await store.analytics('a', { statusCategory: 'RTO', fromDate: '2026-01-01', toDate: '2026-01-01' });
+  assert.equal(filtered.summary.totalOrders, 1); assert.equal(filtered.summary.totalQuantity, 3); assert.equal(filtered.trends[0].date, '2026-01-01');
+  assert.equal((await store.summary('a', { search: 'A-RTO' })).totalOrders, 1);
 });
