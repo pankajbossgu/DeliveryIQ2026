@@ -51,8 +51,15 @@ function dimensions(templateType) { return templateType === 'full' ? ['date', 'm
 function aggregate(rows, templateType) { const orders = canonicalRows(rows); const summary = Object.fromEntries(CATEGORIES.map((category) => [category, 0])); orders.forEach((row) => { if (summary[row.category] !== undefined) summary[row.category] += 1; }); const totalOrders = orders.length; const group = (key) => Object.values(rows.reduce((out, row) => { const value = row[key]; if (!value) return out; const bucket = out[value] || (out[value] = { name: value, rows: [] }); bucket.rows.push(row); return out; }, {})).map((bucket) => ({ name: bucket.name, ...metric(bucket.rows) })); const metric = (source) => { const unique = canonicalRows(source); const counts = Object.fromEntries(CATEGORIES.map((category) => [category, unique.filter((row) => row.category === category).length])); const base = { orders: unique.length, ...counts, deliveryPercent: percent(counts.Delivered, unique.length), ndrPercent: percent(counts.NDR, unique.length), rtoPercent: percent(counts.RTO, unique.length) }; if (templateType === 'full') { base.quantity = source.reduce((sum, row) => sum + (row.quantity || 0), 0); base.revenue = Number(source.reduce((sum, row) => sum + (row.rowValue || 0), 0).toFixed(2)); } return base; };
   const analytics = { statusDistribution: { totalOrders, ...summary, percentages: Object.fromEntries(CATEGORIES.map((c) => [c, percent(summary[c], totalOrders)])) }, date: group('orderDate'), masterCategory: group('masterCategory'), product: group('originalProductName'), productCategory: group('productCategory'), paymentMode: group('paymentMode') }; if (templateType === 'full') { analytics.courier = group('courier'); analytics.orderSource = group('orderSource'); analytics.revenue = Number(rows.reduce((sum, row) => sum + (row.rowValue || 0), 0).toFixed(2)); } return { totalOrders, summary, analytics }; }
 function applyFilters(rows, filters = {}, templateType) { const allowed = new Set(dimensions(templateType)); const field = { date: 'orderDate', category: 'category', masterCategory: 'masterCategory', product: 'originalProductName', productCategory: 'productCategory', paymentMode: 'paymentMode', courier: 'courier', orderSource: 'orderSource' }; return rows.filter((row) => { if (filters.from && row.orderDate < filters.from || filters.to && row.orderDate > filters.to) return false; return Object.entries(filters).every(([key, value]) => { if (!value || ['from', 'to'].includes(key)) return true; if (!allowed.has(key) && key !== 'category') return false; return String(row[field[key]] || '') === String(value); }); }); }
-function safeCell(value) { const text = String(value ?? ''); return /^[=+\-@]/.test(text) ? `'${text}` : text; }
+function safeCell(value) { if (typeof value === 'number' && Number.isFinite(value)) return String(value); const text = String(value ?? ''); return /^[=+\-@]/.test(text) ? `'${text}` : text; }
 function csv(rows, templateType) { const headers = ['Order ID', 'Order Date', 'Actual Status', 'Status Category', 'Product Name', 'Master Category', 'Product Category', 'Payment Mode', ...(templateType === 'full' ? ['Product Qty', 'Product Price', 'Revenue', 'Courier', 'Source/Website/Store'] : [])]; const values = rows.map((row) => [row.orderId, row.orderDate, row.originalStatus, row.category, row.originalProductName, row.masterCategory, row.productCategory, row.paymentMode, ...(templateType === 'full' ? [row.quantity, row.productPrice, row.rowValue, row.courier, row.orderSource] : [])]); return [headers, ...values].map((line) => line.map((cell) => `"${safeCell(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n'); }
+const UNIVERSAL_EXPORT_HEADERS = ['Order ID', 'Order Date', 'Actual Status', 'Status Category', 'Product Name', 'Master Category', 'Product Category', 'Product Quantity', 'Product Price', 'Product Value', 'Order Quantity', 'Order Value', 'Latest Report ID', 'Latest Report Completed At'];
+function csvLine(values) { return `${values.map((cell) => `"${safeCell(cell).replace(/"/g, '""')}"`).join(',')}\r\n`; }
+function universalExportRows(order) {
+  // One CSV record per persisted product line preserves multi-product current orders.
+  const lines = order.products?.length ? order.products : [{}];
+  return lines.map((line) => [order.canonicalOrderId || order.originalOrderId, order.orderDate, order.originalStatus, order.statusCategory, line.originalProductName || line.normalizedProductName, line.masterCategory, line.productCategory, line.quantity, line.productPrice, line.rowValue, order.totalQuantity, order.totalValue, order.latestReportId, order.latestReportCompletedAt instanceof Date ? order.latestReportCompletedAt.toISOString() : order.latestReportCompletedAt]);
+}
 function universalProjection(report, canonicalOrderId, rows) {
   const first = rows[0]; const products = rows.map((row) => ({ originalProductName: row.originalProductName, normalizedProductName: row.normalizedProductName, masterCategory: row.masterCategory || null, productCategory: row.productCategory || null, quantity: row.quantity ?? null, productPrice: row.productPrice ?? null, rowValue: row.rowValue ?? null }));
   return { clientId: report.clientId, canonicalOrderId, originalOrderId: first.orderId || first.originalOrderId, latestReportId: report.reportId, latestReportCompletedAt: report.completedAt, orderDate: first.orderDate, originalStatus: first.originalStatus, normalizedStatus: first.normalizedStatus, statusCategory: first.category, paymentMode: first.paymentMode, courier: first.courier, orderSource: first.orderSource, products, totalQuantity: products.reduce((total, line) => total + (line.quantity || 0), 0), totalValue: Number(products.reduce((total, line) => total + (line.rowValue || 0), 0).toFixed(2)) };
@@ -80,11 +87,25 @@ class UniversalStore {
     const filter = universalFilter(clientId, { search, status, statusCategory, fromDate, toDate, reportFromDate, reportToDate });
     const sort = universalSort(sortBy, sortDirection, 'latestReportCompletedAt');
     if (await this.database()) {
-      const [orders, total] = await Promise.all([UniversalOrder.find(filter).sort(sort).skip((page - 1) * limit).limit(limit).lean(), UniversalOrder.countDocuments(filter)]);
+      const listProjection = { clientId: 0, products: 0, paymentMode: 0, courier: 0, orderSource: 0 };
+      const [orders, total] = await Promise.all([UniversalOrder.find(filter, listProjection).sort(sort).skip((page - 1) * limit).limit(limit).lean(), UniversalOrder.countDocuments(filter)]);
       return { orders, total };
     }
     const orders = [...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, { search, status, statusCategory, fromDate, toDate, reportFromDate, reportToDate })).sort(memorySort(sort));
     return { orders: orders.slice((page - 1) * limit, page * limit), total: orders.length };
+  }
+  async exportCurrentOrders(clientId, filters, { maxOrders = 50000 } = {}) {
+    const filter = universalFilter(clientId, filters);
+    const sort = universalSort(filters.sortBy, filters.sortDirection, 'latestReportCompletedAt');
+    if (await this.database()) {
+      const total = await UniversalOrder.countDocuments(filter);
+      if (total > maxOrders) return { total, overLimit: true };
+      const cursor = UniversalOrder.find(filter).select({ canonicalOrderId: 1, originalOrderId: 1, orderDate: 1, originalStatus: 1, statusCategory: 1, products: 1, totalQuantity: 1, totalValue: 1, latestReportId: 1, latestReportCompletedAt: 1 }).sort(sort).lean().cursor({ batchSize: 500 });
+      return { total, orders: cursor };
+    }
+    const orders = [...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, filters)).sort(memorySort(sort));
+    if (orders.length > maxOrders) return { total: orders.length, overLimit: true };
+    return { total: orders.length, orders };
   }
   async orderDetail(clientId, canonicalOrderId) {
     if (await this.database()) return UniversalOrder.findOne({ clientId, canonicalOrderId }).lean();
@@ -227,4 +248,4 @@ class ProcessingStore {
   async cancel(clientId, processId) { const job = await this.get(clientId, processId); if (!job || !ACTIVE_PROCESS_STATUSES.includes(job.status)) return null; job.status = 'cancelled'; job.stage = 'cancelled'; job.cancelledAt = new Date(); return this.save(job); }
   async updateReview(clientId, processId, kind, value, update) { const job = await this.get(clientId, processId); if (!job || job.status !== 'review_required') return null; const item = job.result?.classifications?.[kind === 'product' ? 'products' : 'statuses']?.find((entry) => entry.value === value); if (!item) return null; Object.assign(item, update); return this.save(job); }
 }
-module.exports = { ReportStore, ProcessingStore, UniversalStore, UniversalOrder, UniversalOrderOccurrence, UniversalSync, aggregate, applyFilters, csv, dimensions };
+module.exports = { ReportStore, ProcessingStore, UniversalStore, UniversalOrder, UniversalOrderOccurrence, UniversalSync, aggregate, applyFilters, csv, csvLine, safeCell, universalExportRows, UNIVERSAL_EXPORT_HEADERS, dimensions };
