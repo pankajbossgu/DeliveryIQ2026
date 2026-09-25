@@ -1,6 +1,6 @@
 # Database plan
 
-MongoDB is the single persistent datastore. Mongoose models will be added with explicit tenant ownership before data features ship.
+MongoDB is the single persistent datastore. The mapping abstraction now uses Mongoose `statusMappings` and `productMappings` when `MONGODB_URI` is configured, with a unique `{ clientId, normalizedValue }` index and upserted timestamps. It falls back to process memory for local/no-database operation; that fallback is intentionally not durable.
 
 Planned tenant-scoped collections:
 

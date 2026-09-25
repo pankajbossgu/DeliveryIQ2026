@@ -1,5 +1,6 @@
 const path = require('node:path');
 const zlib = require('node:zlib');
+const { classifyProduct, classifyStatus } = require('./classification');
 
 const MAX_SOURCE_ROWS = 50000;
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -47,11 +48,18 @@ function parseXlsx(buffer) {
     return row;
   });
 }
-function validateUpload(file) {
+function classificationSummary(items) { return items.reduce((summary, item) => { if (item.classificationRequired) summary.requiresReview += 1; else if (item.mappingSource === 'client') summary.client += 1; else summary.generic += 1; return summary; }, { generic: 0, client: 0, requiresReview: 0 }); }
+function groupedClassifications(values, classifier, mappings) {
+  const groups = new Map(); values.forEach((value) => { const key = String(value ?? '').trim(); if (!key) return; const entry = groups.get(key) || { value: key, count: 0 }; entry.count += 1; groups.set(key, entry); });
+  return [...groups.values()].map((entry) => ({ ...entry, ...classifier(entry.value, mappings) }));
+}
+function validateUpload(file, { statusMappings = [], productMappings = [] } = {}) {
   if (!file?.buffer) return error('FILE_REQUIRED', 'Choose a CSV or XLSX file to validate.', {}, 400);
   const type = path.extname(file.originalname || '').toLowerCase().slice(1);
   if (!['csv', 'xlsx'].includes(type)) return error('UNSUPPORTED_FILE_TYPE', 'Only CSV and XLSX files are supported.', { acceptedTypes: ['CSV', 'XLSX'] }, 400);
   if (!file.buffer.length) return error('EMPTY_FILE', 'The uploaded file is empty. Choose a file with a header row and source data.');
+  if (file.buffer.length > MAX_FILE_SIZE) return error('FILE_TOO_LARGE', 'The uploaded file is larger than the 10 MB file limit.', { maxBytes: MAX_FILE_SIZE }, 413);
+  if (type === 'xlsx' && file.buffer.readUInt32LE(0) !== 0x04034b50) return error('MALFORMED_FILE', 'We could not read this file. Export it again as a CSV or XLSX file and try again.');
   let rows; try { rows = type === 'csv' ? parseCsv(file.buffer.toString('utf8').replace(/^\uFEFF/, '')) : parseXlsx(file.buffer); } catch { return error('MALFORMED_FILE', 'We could not read this file. Export it again as a CSV or XLSX file and try again.'); }
   if (!rows.length || !rows[0]?.some((value) => String(value ?? '').trim())) return error('EMPTY_FILE', 'The uploaded file does not contain a header row.');
   const headers = rows[0].map((value) => String(value ?? '').trim()); const sourceRows = rows.slice(1).filter((row) => row.some((value) => String(value ?? '').trim()));
@@ -68,12 +76,14 @@ function validateUpload(file) {
   });
   if (duplicates.length) warnings.push({ code: 'DUPLICATE_SOURCE_ROWS', message: `${duplicates.length} duplicate source row${duplicates.length === 1 ? '' : 's'} detected. No data was removed.`, count: duplicates.length, sampleRows: duplicates.slice(0, 10) });
   if (errors.length) return error('INVALID_ROWS', 'Some rows need attention before you can continue.', { errors: errors.slice(0, 100), errorCount: errors.length, warnings });
-  return { success: true, file: { name: path.basename(file.originalname), type, rows: sourceRows.length }, columns: { detected: headers, mapped: Object.fromEntries(Object.entries(mapped).map(([key, column]) => [key, { label: column.label, source: column.source }])) }, validation: { valid: true, errors: [], warnings, duplicates: duplicates.length }, summary: { sourceRows: sourceRows.length, uniqueOrders: orders.size, productRows: sourceRows.length, detectedStatuses: statuses.size, detectedProducts: products.size } };
+  const statusClassifications = groupedClassifications(sourceRows.map((row) => String(row[mapped.status.index] ?? '').trim()), classifyStatus, statusMappings);
+  const productClassifications = groupedClassifications(sourceRows.map((row) => String(row[mapped.product_name.index] ?? '').trim()), classifyProduct, productMappings);
+  return { success: true, file: { name: path.basename(file.originalname), type, rows: sourceRows.length }, columns: { detected: headers, mapped: Object.fromEntries(Object.entries(mapped).map(([key, column]) => [key, { label: column.label, source: column.source }])) }, validation: { valid: true, errors: [], warnings, duplicates: duplicates.length }, summary: { sourceRows: sourceRows.length, uniqueOrders: orders.size, productRows: sourceRows.length, detectedStatuses: statuses.size, detectedProducts: products.size }, classifications: { statuses: statusClassifications, products: productClassifications, statusSummary: classificationSummary(statusClassifications), productSummary: classificationSummary(productClassifications) } };
 }
-function csvTemplate() { const rows = [DELIVERYIQ_COLUMNS.map((column) => column.label), ['ORD-SAMPLE-1001', '2026-01-15', 'Delivered', 'Sample Product A', '1', 'Prepaid', 'Demo Store'], ['ORD-SAMPLE-1002', '2026-01-16', 'Shipped', 'Sample Product B', '2', 'COD', 'Demo Store']]; return rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n'); }
+function csvTemplate() { const rows = [DELIVERYIQ_COLUMNS.map((column) => column.label), ['ORD-SAMPLE-1001', '2026-01-15', 'Delivered', 'Classic Cotton Tee', '1', 'Prepaid', 'Demo Store'], ['ORD-SAMPLE-1002', '2026-01-16', 'Out for Delivery', 'Travel Bottle Set', '2', 'COD', 'Demo Store']]; return rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n'); }
 module.exports = { DELIVERYIQ_COLUMNS, MAX_FILE_SIZE, MAX_SOURCE_ROWS, csvTemplate, normalizeColumnName, validateUpload };
 function xlsxTemplate() {
-  const rows = [DELIVERYIQ_COLUMNS.map((c) => c.label), ['ORD-SAMPLE-1001', '2026-01-15', 'Delivered', 'Sample Product A', '1', 'Prepaid', 'Demo Store'], ['ORD-SAMPLE-1002', '2026-01-16', 'Shipped', 'Sample Product B', '2', 'COD', 'Demo Store']];
+  const rows = [DELIVERYIQ_COLUMNS.map((c) => c.label), ['ORD-SAMPLE-1001', '2026-01-15', 'Delivered', 'Classic Cotton Tee', '1', 'Prepaid', 'Demo Store'], ['ORD-SAMPLE-1002', '2026-01-16', 'Out for Delivery', 'Travel Bottle Set', '2', 'COD', 'Demo Store']];
   const escape = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;'); const sheetRows = rows.map((row, r) => `<row r="${r + 1}">${row.map((value, c) => `<c r="${String.fromCharCode(65 + c)}${r + 1}" t="inlineStr"><is><t>${escape(value)}</t></is></c>`).join('')}</row>`).join('');
   const files = { '[Content_Types].xml': '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>', '_rels/.rels': '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>', 'xl/workbook.xml': '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Upload template" sheetId="1" r:id="rId1"/></sheets></workbook>', 'xl/_rels/workbook.xml.rels': '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>', 'xl/worksheets/sheet1.xml': `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>` };
   const crc = (b) => { let c = -1; for (const x of b) { c ^= x; for (let i = 0; i < 8; i += 1) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); } return (c ^ -1) >>> 0; }; let offset = 0; const locals = []; const central = [];

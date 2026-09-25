@@ -12,10 +12,14 @@ Final reporting categories are Delivered, In Transit, NDR, RTO, Cancelled, and O
 
 New Order, Order Created, Order Received, New, Pending, Payment Confirmed, and Processing must not map automatically to In Transit. Shipping progress such as Ready to Ship, Label Generated, Manifested, Picked Up, Shipped, In Transit, At Hub, or OFD can map to In Transit.
 
-Client-approved status mappings override generic mappings and are saved for reuse.
+The only report categories are **Delivered**, **In Transit**, **NDR**, **RTO**, **Cancelled**, and **Other**. An unrecognized value is `UNMAPPED` internally: it has no report category, requires review, and blocks report generation. DeliveryIQ never guesses that an unknown value is Other.
+
+Status values are normalized for case, whitespace, hyphen, underscore, slash, and benign punctuation differences while retaining the original courier value for audit. Resolution is deterministic: saved client mapping, RTO, NDR, Delivered, Cancelled, forward shipment/In Transit, Other, then UNMAPPED. RTO context always wins, so RTO Delivered, RTO NDR, RTO OFD, and RTO In Transit are all RTO. Generic pickup failures remain unmapped.
+
+Client-approved status mappings override generic mappings and are saved for reuse. The current unauthenticated application uses a server-owned demo client scope; authenticated server-derived client identity must replace that scope before multi-tenant production use.
 
 ## Products and analytics
 
-Product categories are client-specific. Mapping precedence is saved client mapping, deterministic normalized match, similarity match, optional AI assistance for uncertainty, then client review. AI cannot silently overwrite client-approved mappings.
+Product categories are client-specific and configured with `PRODUCT_CATEGORIES` (comma-separated; the development default is Apparel, Beauty, Electronics, Home, Other). Mapping precedence is saved client mapping, generic mapping when configured, then client review. Product mappings are independent from status classification.
 
 All metrics and filtered exports are calculated authoritatively on the backend. Percentages use the filtered distinct-order total as their denominator.
