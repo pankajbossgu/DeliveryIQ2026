@@ -107,3 +107,12 @@ test('universal read APIs paginate, validate, sort, and remain scoped to the ser
     response = await fetch(`${base}/api/universal/orders/does-not-exist/history`); assert.equal(response.status, 404);
   } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
 });
+
+test('Universal Report frontend consumes the read-only current-state and history APIs', () => {
+  const fs = require('node:fs');
+  const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(html, /data-page="universal"/); assert.match(html, /id="universal-filters"/); assert.match(html, /CURRENT ORDER STATE/);
+  assert.match(script, /\/api\/universal\/summary/); assert.match(script, /\/api\/universal\/orders\?/); assert.match(script, /\/history\?limit=25/);
+  assert.match(script, /HISTORICAL OBSERVATIONS/);
+});
