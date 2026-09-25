@@ -4,19 +4,41 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="DeliveryIQ delivery intelligence for e-commerce teams.">
-    <title>DeliveryIQ</title>
+    <title>DeliveryIQ | Delivery intelligence</title>
     <link rel="stylesheet" href="/css/styles.css">
   </head>
   <body>
-    <main class="landing-shell">
-      <p class="eyebrow">DELIVERY INTELLIGENCE</p>
-      <h1>Turn delivery data into confident decisions.</h1>
-      <p class="intro">DeliveryIQ is being prepared for secure e-commerce delivery analytics, client-specific mapping, and actionable reporting.</p>
-      <div class="status-panel" aria-live="polite">
-        <span class="status-dot" aria-hidden="true"></span>
-        <span id="service-status">Checking service status…</span>
-      </div>
-    </main>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Primary navigation">
+        <a class="brand" href="#dashboard" aria-label="DeliveryIQ dashboard"><span class="brand-mark" aria-hidden="true">D</span><span>DeliveryIQ</span></a>
+        <nav class="navigation" aria-label="Workspace">
+          <a class="nav-link is-active" href="#dashboard" data-page="dashboard"><span aria-hidden="true">▦</span>Dashboard</a>
+          <a class="nav-link" href="#upload" data-page="upload"><span aria-hidden="true">↑</span>Upload Data</a>
+          <a class="nav-link" href="#reports" data-page="reports"><span aria-hidden="true">▤</span>Reports</a>
+          <a class="nav-link" href="#products" data-page="products"><span aria-hidden="true">◇</span>Product Mapping</a>
+          <a class="nav-link" href="#statuses" data-page="statuses"><span aria-hidden="true">↔</span>Status Mapping</a>
+          <a class="nav-link" href="#history" data-page="history"><span aria-hidden="true">◷</span>Report History</a>
+          <a class="nav-link" href="#settings" data-page="settings"><span aria-hidden="true">⚙</span>Settings</a>
+        </nav>
+        <div class="sidebar-footer" aria-live="polite"><span class="status-dot" aria-hidden="true"></span><span id="service-status">Checking service…</span></div>
+      </aside>
+      <main class="workspace">
+        <header class="mobile-header"><button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-navigation">Menu</button><a class="brand" href="#dashboard">DeliveryIQ</a></header>
+        <nav class="mobile-navigation" id="mobile-navigation" aria-label="Mobile navigation" hidden></nav>
+        <section class="page is-active" data-page-panel="dashboard" aria-labelledby="dashboard-title">
+          <div class="page-heading"><div><p class="eyebrow">DELIVERY PERFORMANCE</p><h1 id="dashboard-title">Delivery overview</h1><p class="page-context">No report selected. Upload a delivery file to begin building your intelligence workspace.</p></div><div class="heading-actions"><button class="button button-secondary" type="button" data-action="filters">Filters <span aria-hidden="true">⌄</span></button><a class="button button-primary" href="#upload">Upload data</a></div></div>
+          <div class="filter-summary" id="filter-summary" hidden><span>Filters will apply to the selected report.</span><button type="button" data-action="close-filters" aria-label="Close filter summary">×</button></div>
+          <section class="empty-state" aria-labelledby="start-title"><div class="empty-icon" aria-hidden="true">↑</div><div><p class="eyebrow">YOUR FIRST REPORT</p><h2 id="start-title">Turn delivery data into clear next steps.</h2><p>Upload a CSV or XLSX file. DeliveryIQ will validate its structure, identify products and statuses, and guide you through the mappings before a report is generated.</p><a class="button button-primary" href="#upload">Upload delivery data</a></div></section>
+          <section class="dashboard-preview" aria-labelledby="dashboard-preview-title"><div class="section-heading"><div><p class="eyebrow">REPORT DASHBOARD</p><h2 id="dashboard-preview-title">What each report will show</h2></div><p>Metrics use distinct orders, even when an order contains multiple product rows.</p></div><div class="metric-grid"><article><span>Total orders</span><strong>—</strong></article><article><span>Delivered</span><strong>—</strong></article><article><span>NDR</span><strong>—</strong></article><article><span>RTO</span><strong>—</strong></article><article><span>In transit</span><strong>—</strong></article><article><span>Cancelled</span><strong>—</strong></article></div><div class="insight-grid"><article><h3>Delivery status distribution</h3><p>Understand how orders move across final delivery categories.</p></article><article><h3>Performance analysis</h3><p>Explore trends, courier results, RTO and NDR patterns by business dimension.</p></article><article><h3>Product and store performance</h3><p>Compare products, categories, order sources, and payment modes.</p></article></div></section>
+        </section>
+        <section class="page" data-page-panel="upload" aria-labelledby="upload-title" hidden><div class="page-heading"><div><p class="eyebrow">NEW REPORT</p><h1 id="upload-title">Upload delivery data</h1><p class="page-context">CSV and XLSX files up to 50,000 rows. Your data is checked before any report is created.</p></div></div><section class="upload-card"><div class="upload-icon" aria-hidden="true">↑</div><h2>Drop your file here</h2><p>or select it from your computer</p><label class="button button-primary" for="file-upload">Browse files</label><input id="file-upload" type="file" accept=".csv,.xlsx" hidden><p class="upload-help">Accepted formats: CSV, XLSX · Maximum 50,000 rows</p></section><section class="process-section" aria-labelledby="process-title"><p class="eyebrow">WHAT HAPPENS NEXT</p><h2 id="process-title">A clear path from file to report</h2><ol class="process-list"><li><strong>1. Uploading</strong><span>Your file is securely received.</span></li><li><strong>2. Validating</strong><span>Required columns and row limits are checked.</span></li><li><strong>3. Normalizing</strong><span>Values, products, and statuses are prepared for review.</span></li><li><strong>4. Mapping</strong><span>Review uncertain product and status decisions.</span></li><li><strong>5. Calculating</strong><span>Delivery metrics are calculated from distinct orders.</span></li><li><strong>6. Generating report</strong><span>Your filtered analytics dashboard is ready.</span></li></ol></section></section>
+        <section class="page placeholder-page" data-page-panel="reports" aria-labelledby="reports-title" hidden><p class="eyebrow">REPORTS</p><h1 id="reports-title">Answer the business question.</h1><p>Combine date, product category, store, courier, payment mode, and status filters once reports are generated.</p></section>
+        <section class="page placeholder-page" data-page-panel="products" aria-labelledby="products-title" hidden><p class="eyebrow">PRODUCT MAPPING</p><h1 id="products-title">Keep product categories consistent.</h1><p>Client-specific product decisions will be reviewed, saved, and reused across future uploads.</p></section>
+        <section class="page placeholder-page" data-page-panel="statuses" aria-labelledby="statuses-title" hidden><p class="eyebrow">STATUS MAPPING</p><h1 id="statuses-title">Make every delivery status meaningful.</h1><p>Review uncertain values and save client-specific mappings to the six reporting categories.</p></section>
+        <section class="page placeholder-page" data-page-panel="history" aria-labelledby="history-title" hidden><p class="eyebrow">REPORT HISTORY</p><h1 id="history-title">Your completed reports.</h1><p>Generated reports will remain available here with their source and date context.</p></section>
+        <section class="page placeholder-page" data-page-panel="settings" aria-labelledby="settings-title" hidden><p class="eyebrow">SETTINGS</p><h1 id="settings-title">Workspace settings.</h1><p>Client and account settings will be managed here after authentication is introduced.</p></section>
+      </main>
+    </div>
     <script src="/js/app.js"></script>
   </body>
 </html>

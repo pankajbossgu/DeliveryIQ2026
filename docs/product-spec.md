@@ -11,4 +11,4 @@ DeliveryIQ converts client-uploaded e-commerce order and delivery files into del
 
 ## Product areas
 
-The planned application has Dashboard, Upload Data, Reports, Product Mapping, Status Mapping, Report History, and Settings areas. The current milestone provides only the deployable foundation and landing page; upload, authentication, persistence, mappings, analytics, and exports are deliberately not implemented yet.
+The application shell has Dashboard, Upload Data, Reports, Product Mapping, Status Mapping, Report History, and Settings areas. The current milestone provides the navigable browser foundation and upload-flow design; upload processing, authentication, persistence, mappings, analytics, and exports are deliberately not implemented yet.
