@@ -2,7 +2,7 @@
 
 DeliveryIQ is a single-application e-commerce delivery intelligence platform. It will transform client CSV/XLSX order and delivery data into normalized delivery analytics, client-specific mappings, filtered reports, and exports.
 
-> **Current milestone:** deployable application shell and upload-flow design. Upload processing, authentication, persistence, mappings, analytics, and exports are intentionally not implemented yet.
+> **Current milestone:** secure upload intake, validation, templates, and review UI. Authentication, persistence, mappings, analytics, and exports remain future work.
 
 ## Stack and layout
 
