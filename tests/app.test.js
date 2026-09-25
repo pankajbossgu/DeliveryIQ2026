@@ -49,3 +49,27 @@ test('manual, modified, and rejected review outcomes do not persist rejected AI 
   // A rejected suggestion has no call to save(), therefore it cannot become a final mapping.
   assert.equal((await store.list('product', 'client-a')).some((item) => item.originalExample === 'Rejected Product'), false);
 });
+
+test('AI review decisions persist rejection, preserve partial bulk failures, and update AI-approved mappings', async () => {
+  const store = new MappingStore({ mongoUri: null });
+  await store.saveCategory('client', 'Clothing');
+  await store.saveCategory('client', 'Accessories');
+  await store.saveSuggestions('client', [{ normalizedProductName: 'travel bottle set', originalProductName: 'Travel Bottle Set', suggestedCategory: 'Accessories', mappingSource: 'ai-suggested', suggestionStatus: 'AI Suggested' }]);
+  await store.decideSuggestion('client', 'Travel Bottle Set', 'Client Rejected');
+  assert.equal(store.memory.suggestion.get('client')[0].status, 'Client Rejected');
+  await store.save('product', 'client', 'Classic Shirt', 'Clothing', { source: 'AI Approved' });
+  const changed = await store.save('product', 'client', 'Classic Shirt', 'Accessories', { source: 'AI Approved' });
+  assert.equal(changed.source, 'Client Modified');
+  const outcomes = await Promise.allSettled([store.save('product', 'client', 'Good Product', 'Clothing', { source: 'AI Approved' }), store.save('product', 'client', '', 'Clothing', { source: 'AI Approved' })]);
+  assert.equal(outcomes.filter((outcome) => outcome.status === 'fulfilled').length, 1);
+  assert.equal((await store.list('product', 'client')).some((item) => item.originalExample === 'Good Product'), true);
+});
+
+test('duplicate normalized category rename returns a friendly API error', async () => {
+  const instance = await server(); const base = `http://127.0.0.1:${instance.address().port}`;
+  try {
+    for (const name of ['Beauty', 'Accessories']) await fetch(`${base}/api/product-categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
+    const response = await fetch(`${base}/api/product-categories/Beauty`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: ' accessories ' }) });
+    const payload = await response.json(); assert.equal(response.status, 422); assert.equal(payload.code, 'CATEGORY_EXISTS'); assert.match(payload.message, /already exists/i);
+  } finally { await close(instance); }
+});

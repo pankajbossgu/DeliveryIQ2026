@@ -22,7 +22,8 @@ function classifyProducts(products, { mappings = [], categories = [], provider }
     return { ...item, category, confidence: category ? 1 : null, mappingSource: category ? 'client' : 'unmapped', classificationRequired: !category };
   });
   const unknown = items.filter((item) => item.classificationRequired);
-  if (!provider || !unknown.length || !categories.length) return { providerUnavailable: false, items };
+  // A category suggested for a new tenant remains a review-only suggestion.
+  if (!provider || !unknown.length) return { providerUnavailable: false, items };
   const applySuggestions = (response) => { const suggestions = new Map(response.results.map((item) => [item.product, item])); for (const item of unknown) { const suggestion = suggestions.get(item.originalProductName); if (suggestion) Object.assign(item, { suggestedCategory: suggestion.category, confidence: suggestion.confidence, suggestionReason: suggestion.reason, mappingSource: 'ai-suggested', classificationRequired: true, suggestionStatus: 'AI Suggested', model: response.model }); else Object.assign(item, { mappingSource: 'needs-review', suggestionStatus: 'Needs Review', classificationRequired: true, model: response.model }); } return { providerUnavailable: Boolean(response.providerUnavailable), items }; };
   const response = provider.classifyProducts(unknown.map((item) => item.originalProductName), categories);
   return response?.then ? response.then(applySuggestions) : applySuggestions(response);
