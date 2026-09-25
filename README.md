@@ -22,4 +22,4 @@ Raw uploads are transient. Completed report metadata, normalized rows needed for
 
 ## Product classification
 
-DeliveryIQ first reuses saved client product mappings. Only unique, unknown product names are sent server-side to **Gemini 2.5 Flash-Lite** in batches. Gemini suggestions are review-only: clients approve, change, or reject them before a final mapping is saved. Clients may create an AI-suggested category explicitly, but Gemini never creates categories or mappings automatically.
+Uploading validates the selected template, basic row data, and summary counts only. The client then explicitly starts report generation; DeliveryIQ reuses saved client product mappings and sends only unique, unknown product names server-side to the hardcoded **Gemini 2.5 Flash-Lite** model in batches, using only the server-side `GEMINI_API_KEY`. Existing client categories are supplied to Gemini and preferred; for a new client with no categories, Gemini proposes review-only categories. Clients approve, change, reject, create, or select a category before a final mapping is saved. Gemini never creates categories or mappings automatically.
