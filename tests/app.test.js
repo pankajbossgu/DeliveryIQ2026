@@ -6,7 +6,7 @@ const { validateUpload, csvTemplate, xlsxTemplate, normalizeOrderId } = require(
 const { classifyStatus, normalizeMappingValue } = require('../src/classification');
 const { MappingStore } = require('../src/mappings');
 const { classifyProducts, normalizeProductName } = require('../src/product');
-const { ReportStore, aggregate, applyFilters, csv: reportCsv } = require('../src/reports');
+const { ReportStore, UniversalStore, aggregate, applyFilters, csv: reportCsv } = require('../src/reports');
 const { ProcessingStore } = require('../src/reports');
 async function server() { const instance = http.createServer(app); await new Promise((resolve) => instance.listen(0, resolve)); return instance; }
 async function close(instance) { await new Promise((resolve, reject) => instance.close((error) => error ? reject(error) : resolve())); }
@@ -25,6 +25,71 @@ test('mapping/category APIs provide management operations and valid categories o
 test('analytics count distinct normalized orders, support category analytics and filtered denominators', () => { const rows = [['1', 'Delivered', 'A', 'Clothing', 'COD'], ['1', 'Delivered', 'B', 'Beauty', 'COD'], ['2', 'Delivered', 'A', 'Clothing', 'UPI'], ['3', 'NDR', 'A', 'Unclassified Products', 'COD'], ['4', 'RTO', 'A', 'Clothing', 'COD']].map(([orderId, category, originalProductName, productCategory, paymentMode]) => ({ orderId, normalizedOrderId: orderId, category, originalProductName, productCategory, orderDate: '2026-09-01', paymentMode, quantity: 1, rowValue: 10, courier: 'C', orderSource: 'Store' })); const all = aggregate(rows, 'full'); assert.equal(all.totalOrders, 4); assert.equal(all.analytics.productCategory.find((item) => item.name === 'Clothing').orders, 3); const filtered = aggregate(applyFilters(rows, { paymentMode: 'UPI' }, 'full'), 'full'); assert.equal(filtered.analytics.statusDistribution.percentages.Delivered, 100); assert.equal(aggregate(rows, 'simple').analytics.courier, undefined); assert.match(reportCsv([{ orderId: '=CMD', orderDate: '2026-09-01', category: 'Delivered', originalProductName: 'A', productCategory: 'C', paymentMode: 'COD' }], 'simple'), /'=CMD/); });
 
 test('completed report rows retain their category snapshot after mapping changes', async () => { const store = new ReportStore({ mongoUri: null }); const report = await store.create('client-a', { templateType: 'simple', sourceFileName: 'orders.csv', rows: [{ originalOrderId: 'ORD-1', normalizedOrderId: 'ORD-1', order_id: 'ORD-1', order_date: '2026-01-01', category: 'Delivered', originalStatus: 'Delivered', normalizedStatus: 'delivered', originalProductName: 'T-Shirt', normalizedProductName: 't shirt', productCategory: 'Clothing', payment_mode: 'COD' }] }); const detail = await store.detail('client-a', report.reportId); assert.equal(detail.filtered.analytics.productCategory[0].name, 'Clothing'); });
+
+test('universal report keeps one current order per client while retaining immutable order observations', async () => {
+  const store = new ReportStore({ mongoUri: null });
+  const row = (orderId, status, category, product, orderDate = '2026-01-01') => ({ originalOrderId: orderId, normalizedOrderId: normalizeOrderId(orderId), order_id: orderId, order_date: orderDate, category, originalStatus: status, normalizedStatus: status.toLowerCase(), mappingSource: 'generic', originalProductName: product, normalizedProductName: product.toLowerCase(), productCategory: `${product} category`, productMappingSource: 'client', payment_mode: 'COD', quantity: 1, productPrice: 10, rowValue: 10 });
+  const first = await store.create('client-a', { templateType: 'full', sourceFileName: 'one.csv', completedAt: '2026-01-01T00:00:00Z', rows: [row(' ORD001 ', 'NDR', 'NDR', 'A'), row('ORD001', 'NDR', 'NDR', 'B'), row('ORD001', 'NDR', 'NDR', 'C')] });
+  const second = await store.create('client-a', { templateType: 'full', sourceFileName: 'two.csv', completedAt: '2026-01-02T00:00:00Z', rows: [row('ORD001', 'Delivered', 'Delivered', 'A', '2020-01-01'), row('ORD002', 'Delivered', 'Delivered', 'D')] });
+  const orders = await store.universalStore.listOrders('client-a'); const occurrences = await store.universalStore.listOccurrences('client-a');
+  assert.equal(orders.length, 2); assert.equal(occurrences.length, 3);
+  const ord001 = orders.find((item) => item.normalizedOrderId === 'ORD001'); assert.equal(ord001.currentActualStatus, 'Delivered'); assert.equal(ord001.currentStatusCategory, 'Delivered'); assert.equal(ord001.currentProducts.length, 1); assert.equal(ord001.occurrenceCount, 2);
+  assert.equal(occurrences.find((item) => item.reportId === first.reportId).statusCategory, 'NDR'); assert.equal(occurrences.find((item) => item.reportId === first.reportId).productRows.length, 3);
+  await store.universalStore.synchronizeReportToUniversal(second.reportId, 'client-a', store);
+  assert.equal((await store.universalStore.listOccurrences('client-a')).length, 3);
+  await store.create('client-b', { templateType: 'simple', sourceFileName: 'other.csv', rows: [row('ORD001', 'RTO', 'RTO', 'A')] });
+  assert.equal((await store.universalStore.listOrders('client-b')).length, 1);
+});
+
+test('universal current state uses report completion time and report id, never order date', async () => {
+  const store = new ReportStore({ mongoUri: null });
+  const input = (status, orderDate, completedAt) => ({ completedAt, templateType: 'simple', sourceFileName: 'orders.csv', rows: [{ originalOrderId: 'ORD1', normalizedOrderId: 'ORD1', order_id: 'ORD1', order_date: orderDate, category: status, originalStatus: status, normalizedStatus: status.toLowerCase(), mappingSource: 'generic', originalProductName: 'A', normalizedProductName: 'a', productCategory: 'Old category', payment_mode: 'COD' }] });
+  const newer = await store.create('client', input('Delivered', '2020-01-01', '2026-01-02T00:00:00Z')); const older = await store.create('client', input('NDR', '2030-01-01', '2026-01-01T00:00:00Z'));
+  await store.universalStore.synchronizeReportToUniversal(older.reportId, 'client', store);
+  assert.equal((await store.universalStore.listOrders('client'))[0].currentActualStatus, 'Delivered');
+});
+
+test('universal sync failure preserves the completed delivery report and leaves a durable retry state', async () => {
+  const universalStore = new UniversalStore({ mongoUri: null });
+  universalStore.synchronize = async () => { throw new Error('temporary database failure'); };
+  const store = new ReportStore({ mongoUri: null, universalStore });
+  const report = await store.create('client', { templateType: 'simple', sourceFileName: 'orders.csv', rows: [{ originalOrderId: 'ORD-FAILED', normalizedOrderId: 'ORD-FAILED', order_id: 'ORD-FAILED', order_date: '2026-01-01', category: 'NDR', originalStatus: 'NDR', normalizedStatus: 'ndr', mappingSource: 'generic', originalProductName: 'A', normalizedProductName: 'a', productCategory: 'Category', payment_mode: 'COD' }] });
+  assert.equal((await store.detail('client', report.reportId)).reportStatus, 'completed');
+  assert.deepEqual(await universalStore.listOrders('client'), []);
+  assert.deepEqual(universalStore.syncs.get(`client:${report.reportId}`).status, 'failed');
+});
+
+test('universal projection handles full, partial, and no order overlap without duplicate current rows', async () => {
+  const store = new ReportStore({ mongoUri: null });
+  const input = (ids, completedAt) => ({ templateType: 'simple', sourceFileName: 'orders.csv', completedAt, rows: ids.map((id) => ({ originalOrderId: id, normalizedOrderId: normalizeOrderId(id), order_id: id, order_date: '2026-01-01', category: 'NDR', originalStatus: 'NDR', normalizedStatus: 'ndr', mappingSource: 'generic', originalProductName: 'A', normalizedProductName: 'a', productCategory: 'Category', payment_mode: 'COD' })) });
+  await store.create('client', input(['ORD1', 'ORD2'], '2026-01-01T00:00:00Z'));
+  await store.create('client', input(['ORD1', 'ORD2'], '2026-01-02T00:00:00Z'));
+  await store.create('client', input(['ORD2', 'ORD3'], '2026-01-03T00:00:00Z'));
+  await store.create('client', input(['ORD4'], '2026-01-04T00:00:00Z'));
+  const orders = await store.universalStore.listOrders('client');
+  assert.equal(orders.length, 4);
+  assert.equal(orders.find((item) => item.normalizedOrderId === 'ORD2').occurrenceCount, 3);
+});
+
+test('Universal Report API paginates, filters, exports current rows, and returns current-order history', async () => {
+  const rows = (orderId, status, category, product, paymentMode, courier) => [{ originalOrderId: orderId, normalizedOrderId: orderId, order_id: orderId, order_date: '2026-02-01', category, originalStatus: status, normalizedStatus: status.toLowerCase(), mappingSource: 'generic', originalProductName: product, normalizedProductName: product.toLowerCase(), productCategory: 'Accessories', payment_mode: paymentMode, courier, order_source: 'Store', quantity: 2, productPrice: 10, rowValue: 20 }];
+  const first = await app.locals.reportStore.create('demo-client', { templateType: 'full', sourceFileName: 'universal.csv', completedAt: '2026-02-01T00:00:00Z', rows: rows('API-ORD-1', 'NDR', 'NDR', 'Watch Strap', 'COD', 'Courier A') });
+  await app.locals.reportStore.create('demo-client', { templateType: 'full', sourceFileName: 'universal.csv', completedAt: '2026-02-02T00:00:00Z', rows: rows('API-ORD-1', 'Delivered', 'Delivered', 'Watch Strap', 'COD', 'Courier A') });
+  await app.locals.reportStore.create('demo-client', { templateType: 'full', sourceFileName: 'universal.csv', completedAt: '2026-02-03T00:00:00Z', rows: rows('API-ORD-2', 'RTO', 'RTO', 'Bag', 'UPI', 'Courier B') });
+  await app.locals.reportStore.create('another-client', { templateType: 'full', sourceFileName: 'private.csv', completedAt: '2026-02-03T00:00:00Z', rows: rows('PRIVATE-ORD', 'Delivered', 'Delivered', 'Private', 'COD', 'Courier A') });
+  const instance = await server(); const base = `http://127.0.0.1:${instance.address().port}`;
+  try {
+    let response = await fetch(`${base}/api/universal-report?page=1&pageSize=1&statusCategory=Delivered`); let body = await response.json();
+    assert.equal(response.status, 200); assert.equal(body.orders.length, 1); assert.equal(body.orders[0].normalizedOrderId, 'API-ORD-1'); assert.equal(body.summary.Delivered, 1); assert.equal(body.pagination.total, 1);
+    response = await fetch(`${base}/api/universal-report?search=API-ORD-2&paymentMode=UPI&courier=Courier%20B&product=Bag&productCategory=Accessories`); body = await response.json();
+    assert.equal(body.orders.length, 1); assert.equal(body.orders[0].currentStatusCategory, 'RTO');
+    response = await fetch(`${base}/api/universal-report/analytics`); body = await response.json(); assert.equal(body.summary.totalOrders >= 2, true); assert.equal(body.summary.Delivered >= 1, true); assert.equal(body.summary.RTO >= 1, true);
+    response = await fetch(`${base}/api/universal-orders/API-ORD-1`); body = await response.json(); assert.equal(body.order.currentActualStatus, 'Delivered'); assert.equal(body.occurrences.length, 2); assert.equal(body.occurrences[1].reportId, first.reportId); assert.equal(body.occurrences[0].sourceReport.sourceFileName, 'universal.csv');
+    response = await fetch(`${base}/api/universal-report/export?search=API-ORD-1`); const exportBody = await response.text(); assert.equal(response.status, 200); assert.match(exportBody, /Actual Status/); assert.match(exportBody, /Delivered/); assert.doesNotMatch(exportBody, /"NDR"/);
+    response = await fetch(`${base}/api/universal-report?search=PRIVATE-ORD`); assert.equal(response.status, 200); assert.equal((await response.json()).orders.length, 0);
+    assert.equal((await fetch(`${base}/api/universal-report?page=0`)).status, 422); assert.equal((await fetch(`${base}/api/universal-report?from=2026-99-99`)).status, 422); assert.equal((await fetch(`${base}/api/universal-report?statusCategory=Nope`)).status, 422); assert.equal((await fetch(`${base}/api/universal-orders/%20`)).status, 422); assert.equal((await fetch(`${base}/api/universal-orders/not-found`)).status, 404);
+  } finally { await close(instance); }
+});
 
 test('Gemini product workflow deduplicates unknown products and never sends saved mappings', async () => {
   const calls = []; const provider = { async classifyProducts(products, categories) { calls.push({ products, categories }); return { model: 'gemini-2.5-flash-lite', results: [{ product: 'Rose Face Serum', category: 'Beauty', confidence: 0.94, reason: 'Serum' }], failedProducts: [] }; } };
