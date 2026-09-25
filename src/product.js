@@ -6,6 +6,10 @@ function normalizeCategory(value) {
   const category = String(value || '').trim().replace(/\s+/g, ' ');
   return category ? category.slice(0, 80) : null;
 }
+function validAiCategory(value) {
+  const category = normalizeCategory(value);
+  return category && !/[\u0000-\u001f\u007f<>]/.test(category) ? category : null;
+}
 function classifyProducts(products, { mappings = [], categories = [], suggestions = [], provider } = {}) {
   const unique = new Map();
   for (const value of products) {
@@ -26,12 +30,13 @@ function classifyProducts(products, { mappings = [], categories = [], suggestion
   const pending = unknown.filter((item) => !prior.has(item.normalizedProductName));
   for (const item of unknown.filter((entry) => prior.has(entry.normalizedProductName))) {
     const suggestion = prior.get(item.normalizedProductName);
-    if (suggestion.status === 'AI Suggested' && suggestion.suggestedCategory && (!categories.length || categories.includes(suggestion.suggestedCategory))) Object.assign(item, { suggestedCategory: suggestion.suggestedCategory, confidence: suggestion.confidence ?? null, suggestionReason: suggestion.reason || null, mappingSource: 'ai-suggested', classificationRequired: true, suggestionStatus: 'AI Suggested', model: suggestion.model || null });
+    const suggestedCategory = validAiCategory(suggestion.suggestedCategory);
+    if (suggestion.status === 'AI Suggested' && suggestedCategory) Object.assign(item, { suggestedCategory, confidence: suggestion.confidence ?? null, suggestionReason: suggestion.reason || null, mappingSource: 'ai-suggested', classificationRequired: true, suggestionStatus: 'AI Suggested', model: suggestion.model || null });
     else Object.assign(item, { mappingSource: 'needs-review', classificationRequired: true, suggestionStatus: suggestion.status, manualReason: suggestion.status === 'Client Rejected' ? 'AI suggestion rejected. Please assign a category to continue.' : 'AI could not classify this product. Please assign a category manually.' });
   }
   // A category suggested for a new tenant remains a review-only suggestion.
   if (!provider || !pending.length) return { providerUnavailable: false, items };
-  const applySuggestions = (response) => { const suggested = new Map(response.results.map((item) => [item.product, item])); for (const item of pending) { const suggestion = suggested.get(item.originalProductName); if (suggestion?.category && suggestion.category !== 'NO_MATCH') Object.assign(item, { suggestedCategory: suggestion.category, confidence: suggestion.confidence, suggestionReason: suggestion.reason, mappingSource: 'ai-suggested', classificationRequired: true, suggestionStatus: 'AI Suggested', model: response.model }); else Object.assign(item, { mappingSource: 'needs-review', suggestionStatus: suggestion?.category === 'NO_MATCH' ? 'NO_MATCH' : 'Needs Review', classificationRequired: true, manualReason: suggestion?.category === 'NO_MATCH' ? 'No suitable existing category was found. Please assign a category.' : 'AI could not classify this product. Please assign a category manually.', model: response.model }); } return { providerUnavailable: Boolean(response.providerUnavailable), providerError: response.providerError || null, items }; };
+  const applySuggestions = (response) => { const suggested = new Map(response.results.map((item) => [item.product, item])); let noMatchCount = 0; let failedCount = 0; const newCategories = new Set(); for (const item of pending) { const suggestion = suggested.get(item.originalProductName); const suggestedCategory = validAiCategory(suggestion?.category); if (suggestedCategory && suggestedCategory !== 'NO_MATCH') { if (!categories.some((category) => category.toLocaleLowerCase() === suggestedCategory.toLocaleLowerCase())) newCategories.add(suggestedCategory); Object.assign(item, { suggestedCategory, confidence: suggestion.confidence, suggestionReason: suggestion.reason, mappingSource: 'ai-suggested', classificationRequired: true, suggestionStatus: 'AI Suggested', model: response.model }); } else { if (suggestion?.category === 'NO_MATCH') noMatchCount += 1; else failedCount += 1; Object.assign(item, { mappingSource: 'needs-review', suggestionStatus: suggestion?.category === 'NO_MATCH' ? 'NO_MATCH' : 'Needs Review', classificationRequired: true, manualReason: suggestion?.category === 'NO_MATCH' ? 'AI could not confidently classify this product. Please assign a category manually.' : 'AI could not classify this product. Please assign a category manually.', model: response.model }); } } if (process.env.NODE_ENV !== 'production') console.info(JSON.stringify({ event: 'gemini_classification_summary', successfulClassifications: pending.length - noMatchCount - failedCount, newAiCategories: [...newCategories], noMatchCount, failedClassifications: failedCount })); return { providerUnavailable: Boolean(response.providerUnavailable), providerError: response.providerError || null, items }; };
   const response = provider.classifyProducts(pending.map((item) => item.originalProductName), categories);
   return response?.then ? response.then(applySuggestions) : applySuggestions(response);
 }

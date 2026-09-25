@@ -35,12 +35,23 @@ test('Gemini product workflow deduplicates unknown products and never sends save
   const next = await classifyProducts(['Rose Face Serum'], { mappings: [{ normalizedValue: 'rose face serum', category: 'Beauty' }], categories: ['Beauty'], provider });
   assert.equal(calls.length, 1); assert.equal(next.items[0].category, 'Beauty');
 });
-test('invalid Gemini categories remain needs review and transient Gemini retries are bounded', async () => {
+test('Gemini accepts safe new categories while canonicalizing matching existing categories and retries transient failures', async () => {
   const { GeminiProductClassifier, validateGeminiResults } = require('../src/product-classifier');
-  assert.deepEqual(validateGeminiResults({ results: [{ product: 'Product A', category: 'Random Category' }] }, ['Product A'], ['Beauty']), []);
+  assert.deepEqual(validateGeminiResults({ results: [{ product: 'Product A', category: 'skincare' }, { product: 'Product B', category: 'Random Category' }, { product: 'Product C', category: '<unsafe>' }] }, ['Product A', 'Product B', 'Product C'], ['Skincare']), [{ product: 'Product A', category: 'Skincare', confidence: null, reason: null }, { product: 'Product B', category: 'Random Category', confidence: null, reason: null }]);
   let requests = 0; const classifier = new GeminiProductClassifier({ apiKey: 'test-key', retries: 2, fetchImpl: async () => { requests += 1; return { ok: false, status: 429, statusText: 'Too Many Requests', text: async () => JSON.stringify({ error: { message: 'Quota exceeded' } }) }; } });
   const response = await classifier.classifyProducts(['Product A'], ['Beauty']);
   assert.equal(requests, 3); assert.deepEqual(response.failedProducts, ['Product A']);
+});
+test('Gemini classification keeps categories as preferred reuse rather than an allow-list', async () => {
+  const products = ['AeroFit Running T-Shirt', 'HydraSteel Water Bottle', 'GlowNest Face Serum', 'LunaGlow Hair Serum', 'FlexiCore Yoga Mat', 'CloudSoft Cushion Cover', 'FreshMint Face Wash', 'VoltEdge Charging Cable', 'BreezeCool Mini Fan', 'NutriBlend Spice Jar Set', 'CozyNest Bedsheet Set', 'SnapGrip Phone Stand'];
+  const categories = ['Apparel', 'Travel Accessories']; const calls = [];
+  const expected = ['Apparel', 'Travel Accessories', 'Skincare', 'Hair Care', 'Fitness', 'Home Furnishings', 'Skincare', 'Mobile Accessories', 'Home Appliances', 'Kitchen & Dining', 'Bedding', 'Mobile Accessories'];
+  const provider = { async classifyProducts(unknownProducts, currentCategories) { calls.push({ unknownProducts, currentCategories }); return { model: 'gemini-2.5-flash-lite', results: unknownProducts.map((product, index) => ({ product, category: expected[index] })), failedProducts: [] }; } };
+  const result = await classifyProducts([...products, products[0]], { categories, provider });
+  assert.deepEqual(calls, [{ unknownProducts: products, currentCategories: categories }]);
+  assert.deepEqual(result.items.map((item) => item.suggestedCategory), expected);
+  const saved = await classifyProducts(products, { mappings: products.map((product, index) => ({ normalizedValue: normalizeProductName(product), category: expected[index] })), categories, provider });
+  assert.equal(calls.length, 1); assert.ok(saved.items.every((item) => item.mappingSource === 'client'));
 });
 test('Gemini uses the fixed Flash-Lite model and suggests categories for new clients', async () => {
   const { GeminiProductClassifier, GEMINI_MODEL } = require('../src/product-classifier');
@@ -50,7 +61,7 @@ test('Gemini uses the fixed Flash-Lite model and suggests categories for new cli
   assert.equal(GEMINI_MODEL, 'gemini-2.5-flash-lite');
   assert.match(request.url, /gemini-2\.5-flash-lite/); assert.doesNotMatch(request.url, /not-allowed/);
   assert.equal(request.headers['x-goog-api-key'], 'server-only-key'); assert.doesNotMatch(request.url, /key=/);
-  assert.deepEqual(request.body.contents[0].parts[0].text.includes('Suggest one concise'), true);
+  assert.deepEqual(request.body.contents[0].parts[0].text.includes('reusable client options, not an allow-list'), true);
   assert.deepEqual(response.results, [{ product: 'Ceramic Pour Over Set', category: 'Kitchenware', confidence: 0.91, reason: null }]);
   const calls = []; const provider = { async classifyProducts(products, categories) { calls.push({ products, categories }); return { model: GEMINI_MODEL, results: [{ product: 'Ceramic Pour Over Set', category: 'Kitchenware' }, { product: 'Travel Neck Pillow', category: 'Travel Accessories' }], failedProducts: [] }; } };
   const classified = await classifyProducts(['Ceramic Pour Over Set', 'Travel Neck Pillow'], { mappings: [], categories: [], provider });
@@ -121,7 +132,7 @@ test('NO_MATCH, failures, and rejected suggestions remain manual fallbacks witho
   const noMatch = { async classifyProducts(products) { return { model: 'gemini-2.5-flash-lite', results: products.map((product) => ({ product, category: 'NO_MATCH' })), failedProducts: [] }; } };
   const result = await classifyProducts(['Unclassifiable Product'], { categories: ['Clothing'], provider: noMatch });
   assert.equal(result.items[0].suggestedCategory, undefined);
-  assert.match(result.items[0].manualReason, /No suitable existing category/);
+  assert.match(result.items[0].manualReason, /could not confidently classify/i);
   let calls = 0;
   const provider = { async classifyProducts() { calls += 1; return { results: [] }; } };
   const rejected = await classifyProducts(['Rejected Product'], { categories: ['Clothing'], suggestions: [{ normalizedProductName: 'rejected product', status: 'Client Rejected' }], provider });
