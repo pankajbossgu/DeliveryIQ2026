@@ -73,3 +73,31 @@ test('duplicate normalized category rename returns a friendly API error', async 
     const payload = await response.json(); assert.equal(response.status, 422); assert.equal(payload.code, 'CATEGORY_EXISTS'); assert.match(payload.message, /already exists/i);
   } finally { await close(instance); }
 });
+
+test('upload sends only unknown normalized products and current client categories to Gemini', async () => {
+  const calls = [];
+  const provider = { async classifyProducts(products, categories) { calls.push({ products, categories }); return { model: 'gemini-2.5-flash-lite', results: products.map((product) => ({ product, category: product.includes('Nail') ? 'Nail Care' : 'Skin Care' })), failedProducts: [] }; } };
+  const csv = simpleHeader + '1,2026-01-01,Delivered,D-Fame Nail Repair Serum,COD\n2,2026-01-01,Delivered,Vitamin C Face Serum,COD\n3,2026-01-01,Delivered,Vitamin C Face Serum,COD\n4,2026-01-01,Delivered,Known Product,COD\n';
+  const result = await validateUpload({ originalname: 'orders.csv', buffer: Buffer.from(csv) }, { templateType: 'simple', productMappings: [{ normalizedValue: 'known product', category: 'Skin Care' }], productCategories: ['Nail Care', 'Skin Care'], productClassifier: provider });
+  assert.deepEqual(calls, [{ products: ['D-Fame Nail Repair Serum', 'Vitamin C Face Serum'], categories: ['Nail Care', 'Skin Care'] }]);
+  assert.equal(result.classifications.products.find((item) => item.value === 'Known Product').category, 'Skin Care');
+  assert.equal(result.classifications.products.find((item) => item.value === 'D-Fame Nail Repair Serum').suggestedCategory, 'Nail Care');
+});
+
+test('NO_MATCH, failures, and rejected suggestions remain manual fallbacks without another Gemini call', async () => {
+  const noMatch = { async classifyProducts(products) { return { model: 'gemini-2.5-flash-lite', results: products.map((product) => ({ product, category: 'NO_MATCH' })), failedProducts: [] }; } };
+  const result = await classifyProducts(['Unclassifiable Product'], { categories: ['Clothing'], provider: noMatch });
+  assert.equal(result.items[0].suggestedCategory, undefined);
+  assert.match(result.items[0].manualReason, /No suitable existing category/);
+  let calls = 0;
+  const provider = { async classifyProducts() { calls += 1; return { results: [] }; } };
+  const rejected = await classifyProducts(['Rejected Product'], { categories: ['Clothing'], suggestions: [{ normalizedProductName: 'rejected product', status: 'Client Rejected' }], provider });
+  assert.equal(calls, 0);
+  assert.match(rejected.items[0].manualReason, /rejected/);
+});
+
+test('new category creation rejects normalized duplicates with a friendly response', async () => {
+  const store = new MappingStore({ mongoUri: null });
+  await store.saveCategory('client', 'Home & Kitchen');
+  await assert.rejects(() => store.saveCategory('client', ' home kitchen '), { code: 'CATEGORY_EXISTS' });
+});
