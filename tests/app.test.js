@@ -7,6 +7,7 @@ const { classifyStatus, normalizeMappingValue } = require('../src/classification
 const { MappingStore } = require('../src/mappings');
 const { classifyProducts, normalizeProductName } = require('../src/product');
 const { ReportStore, aggregate, applyFilters, csv: reportCsv } = require('../src/reports');
+const { ProcessingStore } = require('../src/reports');
 async function server() { const instance = http.createServer(app); await new Promise((resolve) => instance.listen(0, resolve)); return instance; }
 async function close(instance) { await new Promise((resolve, reject) => instance.close((error) => error ? reject(error) : resolve())); }
 const simpleHeader = 'Order ID,Order Date,Order Status,Product Name,Payment Mode\n';
@@ -40,6 +41,20 @@ test('invalid Gemini categories remain needs review and transient Gemini retries
   let requests = 0; const classifier = new GeminiProductClassifier({ apiKey: 'test-key', retries: 2, fetchImpl: async () => { requests += 1; return { ok: false, status: 429 }; } });
   const response = await classifier.classifyProducts(['Product A'], ['Beauty']);
   assert.equal(requests, 3); assert.deepEqual(response.failedProducts, ['Product A']);
+});
+test('Gemini uses the fixed Flash-Lite model and suggests categories for new clients', async () => {
+  const { GeminiProductClassifier, GEMINI_MODEL } = require('../src/product-classifier');
+  let request;
+  const classifier = new GeminiProductClassifier({ apiKey: 'server-only-key', model: 'not-allowed', fetchImpl: async (url, options) => { request = { url, body: JSON.parse(options.body) }; return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ results: [{ product: 'Ceramic Pour Over Set', category: 'Kitchenware', confidence: 0.91 }] }) }] } }] }) }; } });
+  const response = await classifier.classifyProducts(['Ceramic Pour Over Set', 'Travel Neck Pillow'], []);
+  assert.equal(GEMINI_MODEL, 'gemini-2.5-flash-lite');
+  assert.match(request.url, /gemini-2\.5-flash-lite/); assert.doesNotMatch(request.url, /not-allowed/);
+  assert.deepEqual(request.body.contents[0].parts[0].text.includes('Suggest one concise'), true);
+  assert.deepEqual(response.results, [{ product: 'Ceramic Pour Over Set', category: 'Kitchenware', confidence: 0.91, reason: null }]);
+  const calls = []; const provider = { async classifyProducts(products, categories) { calls.push({ products, categories }); return { model: GEMINI_MODEL, results: [{ product: 'Ceramic Pour Over Set', category: 'Kitchenware' }, { product: 'Travel Neck Pillow', category: 'Travel Accessories' }], failedProducts: [] }; } };
+  const classified = await classifyProducts(['Ceramic Pour Over Set', 'Travel Neck Pillow'], { mappings: [], categories: [], provider });
+  assert.deepEqual(calls, [{ products: ['Ceramic Pour Over Set', 'Travel Neck Pillow'], categories: [] }]);
+  assert.deepEqual(classified.items.map((item) => item.suggestedCategory), ['Kitchenware', 'Travel Accessories']);
 });
 test('manual, modified, and rejected review outcomes do not persist rejected AI categories', async () => {
   const store = new MappingStore({ mongoUri: null }); await store.saveCategory('client-a', 'Beauty'); await store.saveCategory('client-a', 'Personal Care');
@@ -100,4 +115,30 @@ test('new category creation rejects normalized duplicates with a friendly respon
   const store = new MappingStore({ mongoUri: null });
   await store.saveCategory('client', 'Home & Kitchen');
   await assert.rejects(() => store.saveCategory('client', ' home kitchen '), { code: 'CATEGORY_EXISTS' });
+});
+
+test('validation endpoint stores a queued process without calling Gemini, then start advances the process once', async () => {
+  const instance = await server(); const base = `http://127.0.0.1:${instance.address().port}`;
+  try {
+    const response = await fetch(`${base}/api/uploads/validate`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-file-name': 'orders.csv', 'x-template-type': 'simple', 'x-report-request-id': 'validation-only-test' }, body: Buffer.from(simpleHeader + '1,2026-01-01,Delivered,Unmapped Product,COD\n') });
+    const payload = await response.json(); assert.equal(response.status, 200); assert.equal(payload.classifications, undefined); assert.equal(payload.process.status, 'queued');
+    const duplicate = await fetch(`${base}/api/uploads/validate`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-file-name': 'orders.csv', 'x-template-type': 'simple', 'x-report-request-id': 'validation-only-test' }, body: Buffer.from(simpleHeader + '1,2026-01-01,Delivered,Unmapped Product,COD\n') }).then((r) => r.json());
+    assert.equal(duplicate.process.processId, payload.process.processId);
+    const started = await fetch(`${base}/api/report-processes/${payload.process.processId}/start`, { method: 'POST' }); assert.equal(started.status, 202);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const process = await fetch(`${base}/api/report-processes/${payload.process.processId}`).then((r) => r.json()); assert.ok(['review_required', 'finalizing'].includes(process.process.status));
+  } finally { await close(instance); }
+});
+
+test('processing store prevents duplicate starts while a report process is active', async () => {
+  const store = new ProcessingStore(); const job = store.createValidated('client', { summary: {}, templateType: 'simple', file: {} }, 'same-request');
+  let calls = 0; await store.start('client', job.processId, async () => { calls += 1; return { classifications: { statuses: [], products: [] } }; }); await store.start('client', job.processId, async () => { calls += 1; return { classifications: { statuses: [], products: [] } }; });
+  await new Promise((resolve) => setTimeout(resolve, 5)); assert.equal(calls, 1);
+});
+
+test('processing completes automatically when saved mappings leave no review work', async () => {
+  const store = new ProcessingStore(); const job = store.createValidated('client', { summary: {}, templateType: 'simple', file: {} }, 'complete-request');
+  await store.start('client', job.processId, async () => ({ result: { classifications: { statuses: [], products: [] } }, report: { reportId: 'completed-report' } }));
+  await new Promise((resolve) => setTimeout(resolve, 5)); const completed = store.get('client', job.processId);
+  assert.equal(completed.status, 'completed'); assert.equal(completed.stage, 'completed'); assert.equal(completed.report.reportId, 'completed-report');
 });
