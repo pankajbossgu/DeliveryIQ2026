@@ -1,6 +1,6 @@
 # DeliveryIQ
 
-DeliveryIQ is a single Express, MongoDB/Mongoose, and Vercel application for delivery reporting. Clients select a **Simple** or **Full** report template, upload CSV/XLSX data, review unresolved status/product mappings, and return to persisted reports.
+DeliveryIQ is a single Express, MongoDB/Mongoose, and Vercel application for delivery reporting. Clients select a **Simple** or **Full** report template, upload CSV/XLSX data, review deterministic status mappings and Gemini-assisted product suggestions, and return to persisted reports.
 
 ## Report templates
 
@@ -19,3 +19,7 @@ npm run check
 ```
 
 Raw uploads are transient. Completed report metadata, normalized rows needed for filters/exports, and analytics are persisted in MongoDB when configured; local development falls back to process memory.
+
+## Product classification
+
+DeliveryIQ first reuses saved client product mappings. Only unique, unknown product names are sent server-side to **Gemini 2.5 Flash-Lite** in batches. Gemini suggestions are review-only: clients approve, change, or reject them before a final mapping is saved. Clients may create an AI-suggested category explicitly, but Gemini never creates categories or mappings automatically.
