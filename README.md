@@ -1,48 +1,21 @@
 # DeliveryIQ
 
-DeliveryIQ is a single-application e-commerce delivery intelligence platform. It will transform client CSV/XLSX order and delivery data into normalized delivery analytics, client-specific mappings, filtered reports, and exports.
+DeliveryIQ is a single Express, MongoDB/Mongoose, and Vercel application for delivery reporting. Clients select a **Simple** or **Full** report template, upload CSV/XLSX data, review unresolved status/product mappings, and return to persisted reports.
 
-> **Current milestone:** secure upload validation plus delivery-status and product review. Authentication and finalized analytics/exports remain future work.
+## Report templates
 
-## Stack and layout
+- **Simple:** `Order ID`, `Order Date`, `Order Status`, `Product Name`, `Payment Mode`.
+- **Full:** Simple fields plus `Product Qty`, `Product Price`, `Courier`, and `Source/Website/Store`.
 
-- Node.js and Express API in `api/index.js` and `src/`
-- Static HTML, CSS, and JavaScript interface in `public/`
-- MongoDB and Mongoose for upcoming persistence
-- One Vercel project configured by `vercel.json`
+Download each CSV/XLSX template from Upload Data. Full-template Product Price is a **unit price**; row value is quantity × unit price. Order metrics count distinct Order IDs; product metrics retain every product row.
 
-```
-api/       Vercel/Express entry point
-docs/      concise product and operational documentation
-public/    browser interface
-src/       application modules
-tests/     automated checks
-```
-
-## Get started
-
-1. Copy `.env.example` to `.env` and set appropriate local values.
-2. Install dependencies: `npm install`.
-3. Start the app: `npm start`.
-4. Open `http://localhost:3000/`; the health endpoint is at `http://localhost:3000/api/health`.
-
-## Checks
+## Run and verify
 
 ```bash
+npm install
+npm start
 npm test
 npm run check
 ```
 
-## Deployment
-
-Deploy the repository as a single Vercel project. `/api/*` is handled by the Express entry point and `/` is served from `public/`. Configure the environment variables documented in `.env.example`; never commit real secrets. See [deployment documentation](docs/deployment.md) for details.
-
-## Documentation
-
-- [Product specification](docs/product-spec.md)
-- [Business rules](docs/business-rules.md)
-- [Architecture](docs/architecture.md)
-- [Database plan](docs/database.md)
-- [Deployment](docs/deployment.md)
-- [Inspection and foundation design](docs/inspection-design.md)
-- [Classification and mapping workflow](docs/business-rules.md)
+Raw uploads are transient. Completed report metadata, normalized rows needed for filters/exports, and analytics are persisted in MongoDB when configured; local development falls back to process memory.
