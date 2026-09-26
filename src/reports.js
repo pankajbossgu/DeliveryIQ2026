@@ -195,10 +195,10 @@ class UniversalStore {
     const orderTotalLabel = shippedBasis ? 'Shipped Orders' : 'Total Orders';
     // Apply the same basis to a group and the report summary; counts stay intact.
     const basisMetrics = (totalOrders, counts) => {
-      const shippedOrders = counts.Delivered + counts.NDR + counts.RTO;
+      const shippedOrders = counts.Delivered + counts['In Transit'] + counts.NDR + counts.RTO;
       const orderTotal = shippedBasis ? shippedOrders : totalOrders;
       const percentages = Object.fromEntries(CATEGORIES.map((category) => [category,
-        shippedBasis && !['Delivered', 'NDR', 'RTO'].includes(category) ? null : percent(counts[category], orderTotal)
+        shippedBasis && !['Delivered', 'In Transit', 'NDR', 'RTO'].includes(category) ? null : percent(counts[category], orderTotal)
       ]));
       return { shippedOrders, orderTotal, orderTotalLabel, percentages, deliveryPercentage: percentages.Delivered };
     };

@@ -235,20 +235,20 @@ test('report basis applies to summary and each group without changing counts or 
     assert.equal(all.orderTotalLabel, 'Total Orders');
     assert.equal(shipped.orderTotalLabel, 'Shipped Orders');
     assert.equal(all.totals.orderTotal, 11);
-    assert.equal(shipped.totals.orderTotal, 6);
+    assert.equal(shipped.totals.orderTotal, 8);
     assert.equal(shipped.totals.totalOrders, 11);
-    assert.equal(shipped.totals.shippedOrders, 6);
+    assert.equal(shipped.totals.shippedOrders, 8);
     assert.equal(all.totals.deliveryPercentage, 27.27);
-    assert.equal(shipped.totals.deliveryPercentage, 50);
+    assert.equal(shipped.totals.deliveryPercentage, 37.5);
     assert.deepEqual(all.totals.percentages, { Delivered: 27.27, 'In Transit': 18.18, NDR: 9.09, RTO: 18.18, Cancelled: 18.18, Other: 9.09 });
-    assert.deepEqual(shipped.totals.percentages, { Delivered: 50, 'In Transit': null, NDR: 16.67, RTO: 33.33, Cancelled: null, Other: null });
+    assert.deepEqual(shipped.totals.percentages, { Delivered: 37.5, 'In Transit': 25, NDR: 12.5, RTO: 25, Cancelled: null, Other: null });
     assert.deepEqual(shipped.totals.byStatusCategory, all.totals.byStatusCategory);
     assert.equal(shipped.totals.totalValue, all.totals.totalValue);
     for (const row of shipped.rows) {
       const original = all.rows.find((item) => item.name === row.name);
       for (const field of ['totalOrders', 'delivered', 'ndr', 'rto', 'inTransit', 'cancelled', 'other', 'totalOrderValue', 'deliveredOrderValue']) assert.equal(row[field], original[field]);
-      assert.equal(row.orderTotal, row.delivered + row.ndr + row.rto);
-      assert.equal(row.percentages['In Transit'], null);
+      assert.equal(row.orderTotal, row.delivered + row.inTransit + row.ndr + row.rto);
+      assert.equal(row.percentages['In Transit'], row.orderTotal ? Number((row.inTransit * 100 / row.orderTotal).toFixed(2)) : 0);
       assert.equal(row.percentages.Cancelled, null);
       assert.equal(row.percentages.Other, null);
     }
@@ -257,10 +257,10 @@ test('report basis applies to summary and each group without changing counts or 
       const beta = shipped.rows.find((row) => row.name === 'Beta');
       const zero = shipped.rows.find((row) => row.name === 'Gamma');
       assert.equal(all.rows.find((row) => row.name === 'Alpha').deliveryPercentage, 28.57);
-      assert.equal(alpha.orderTotal, 4); assert.equal(alpha.deliveryPercentage, 50);
-      assert.equal(alpha.percentages.NDR, 25); assert.equal(alpha.percentages.RTO, 25);
+      assert.equal(alpha.orderTotal, 5); assert.equal(alpha.deliveryPercentage, 40);
+      assert.equal(alpha.percentages['In Transit'], 20); assert.equal(alpha.percentages.NDR, 20); assert.equal(alpha.percentages.RTO, 20);
       assert.equal(beta.orderTotal, 2); assert.equal(beta.deliveryPercentage, 50); assert.equal(beta.percentages.RTO, 50);
-      assert.equal(zero.orderTotal, 0); assert.equal(zero.deliveryPercentage, 0); assert.equal(zero.inTransit, 1);
+      assert.equal(zero.orderTotal, 1); assert.equal(zero.deliveryPercentage, 0); assert.equal(zero.percentages['In Transit'], 100); assert.equal(zero.inTransit, 1);
     }
   }
   for (const deliveryView of ['all_orders', 'shipped_orders']) {
@@ -273,6 +273,26 @@ test('report basis applies to summary and each group without changing counts or 
   }
 });
 
+test('shipped basis matches the 821-order example and excludes cancelled and other', async () => {
+  const store = new UniversalStore({ mongoUri: null });
+  const counts = { Delivered: 48, 'In Transit': 445, NDR: 146, RTO: 182, Cancelled: 1, Other: 1 };
+  const rows = Object.entries(counts).flatMap(([category, count]) => Array.from({ length: count }, (_, index) => ({
+    ...universalRow(`${category}-${index}`, '2026-01-01', 'Example'), category, originalStatus: category
+  })));
+  await store.syncCompletedReport('a', universalReport('a', 'EXAMPLE', '2026-02-01T00:00:00Z'), rows);
+  const all = await store.groupedReport('a', { analyzeBy: 'product' });
+  const shipped = await store.groupedReport('a', { analyzeBy: 'product', deliveryView: 'shipped_orders' });
+  assert.equal(all.totals.orderTotal, 823);
+  assert.equal(all.totals.deliveryPercentage, 5.83);
+  assert.equal(shipped.totals.orderTotal, 821);
+  assert.equal(shipped.totals.deliveryPercentage, 5.85);
+  assert.equal(shipped.totals.percentages['In Transit'], 54.2);
+  assert.equal(shipped.rows[0].orderTotal, 821);
+  assert.equal(shipped.rows[0].deliveryPercentage, 5.85);
+  assert.equal(shipped.totals.cancelledOrders, 1);
+  assert.equal(shipped.totals.otherOrders, 1);
+});
+
 test('summary CSV and XLSX exports use the selected basis with mixed status groups', async () => {
   const app = require('../src/app'); const previousStore = app.locals.universalStore;
   const store = new UniversalStore({ mongoUri: null }); app.locals.universalStore = store;
@@ -280,7 +300,7 @@ test('summary CSV and XLSX exports use the selected basis with mixed status grou
     ['Delivered', 'NDR', 'In Transit', 'Cancelled', 'Other'].map((category, index) => ({ ...universalRow(`EXPORT-${index}`, '2026-01-01', 'Mixed'), category, originalStatus: category })));
   const server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)); }); const base = `http://127.0.0.1:${server.address().port}`;
   try {
-    for (const [basis, label, total, percentage] of [['all_orders', 'Total Orders', 5, 20], ['shipped_orders', 'Shipped Orders', 2, 50]]) {
+    for (const [basis, label, total, percentage] of [['all_orders', 'Total Orders', 5, 20], ['shipped_orders', 'Shipped Orders', 3, 33.33]]) {
       const query = `analyzeBy=product&deliveryView=${basis}&exportType=summary`;
       let response = await authenticatedFetch(base, `/api/universal/export?${query}&format=csv`);
       assert.equal(response.status, 200);
