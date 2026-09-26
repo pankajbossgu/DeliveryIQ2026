@@ -189,7 +189,10 @@ class UniversalStore {
       }
     }
     if (analyzeBy === 'category_status') for (const category of CATEGORIES) if (!groups.has(category)) groups.set(category, { name: category, totalOrders: 0, delivered: 0, inTransit: 0, ndr: 0, rto: 0, cancelled: 0, other: 0, totalOrderValue: 0, deliveredOrderValue: 0, _orders: new Set() });
-    const rows = [...groups.values()].map(({ _orders, ...row }) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'number' ? Number(value.toFixed(2)) : value]))).sort((a, b) => b.totalOrders - a.totalOrders || a.name.localeCompare(b.name));
+    const rows = [...groups.values()].map(({ _orders, ...row }) => ({
+      ...Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'number' ? Number(value.toFixed(2)) : value])),
+      deliveryPercentage: row.totalOrders ? Number((row.delivered * 100 / row.totalOrders).toFixed(2)) : 0
+    })).sort((a, b) => b.totalOrders - a.totalOrders || a.name.localeCompare(b.name));
     const totals = summaryFromOrders(orders);
     totals.deliveredOrders = totals.byStatusCategory.Delivered || 0; totals.inTransitOrders = totals.byStatusCategory['In Transit'] || 0; totals.ndrOrders = totals.byStatusCategory.NDR || 0; totals.rtoOrders = totals.byStatusCategory.RTO || 0; totals.cancelledOrders = totals.byStatusCategory.Cancelled || 0; totals.otherOrders = totals.byStatusCategory.Other || 0;
     totals.deliveredOrderValue = Number(orders.filter((order) => order.statusCategory === 'Delivered').reduce((sum, order) => sum + Number(order.totalValue || 0), 0).toFixed(2));

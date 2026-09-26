@@ -59,7 +59,7 @@ app.get('/api/universal/export', universalExportRateLimit, universalRoute(async 
   try {
     if (query.exportType === 'summary') {
       const report = await app.locals.universalStore.groupedReport(universalClientId(), query);
-      const rows = [[report.groupLabel, 'Delivered', 'In Transit', 'NDR', 'RTO', 'Cancelled', 'Other', 'Total Orders', 'Total Order Value', 'Delivered Order Value'], ...report.rows.map((row) => [row.name, row.delivered, row.inTransit, row.ndr, row.rto, row.cancelled, row.other, row.totalOrders, row.totalOrderValue, row.deliveredOrderValue])];
+      const rows = [[report.groupLabel, 'Delivered', 'In Transit', 'NDR', 'RTO', 'Cancelled', 'Other', 'Total Orders', 'Delivery %', 'Total Order Value', 'Delivered Order Value'], ...report.rows.map((row) => [row.name, row.delivered, row.inTransit, row.ndr, row.rto, row.cancelled, row.other, row.totalOrders, row.deliveryPercentage, row.totalOrderValue, row.deliveredOrderValue])];
       const base = `deliveryiq-${report.analyzeBy}-summary`;
       if (query.format === 'xlsx') return response.attachment(`${base}.xlsx`).type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(xlsxWorkbook(rows, `${report.groupLabel} Summary`));
       return response.attachment(`${base}.csv`).type('text/csv; charset=utf-8').send(`\uFEFF${rows.map(csvLine).join('')}`);
