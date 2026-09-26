@@ -93,6 +93,108 @@ select {
   font: inherit;
 }
 
+/* Premium select: the semantic select remains in the form, while this control
+   gives every workspace picker a shared, touch-friendly interface. */
+.premium-select {
+  position: relative;
+  display: inline-block;
+  min-width: 0;
+  vertical-align: middle;
+}
+
+.premium-select > select {
+  position: absolute;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px;
+  padding: 0 !important;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  border: 0 !important;
+  white-space: nowrap;
+}
+
+.premium-select-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 11px 0 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: linear-gradient(135deg, #fff, #f8faff);
+  box-shadow: 0 1px 2px rgba(31, 47, 73, .03), inset 0 1px 0 rgba(255, 255, 255, .8);
+  color: #2d3b52;
+  cursor: pointer;
+  font-size: .8rem;
+  font-weight: 700;
+  text-align: left;
+  transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+
+.premium-select-trigger:hover,
+.premium-select-trigger[aria-expanded="true"] {
+  border-color: #8ea3dc;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(49, 84, 199, .10), var(--shadow-sm);
+}
+
+.premium-select-trigger:focus-visible { outline: 3px solid #a8b7ef; outline-offset: 2px; }
+.premium-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.premium-select-chevron { flex: 0 0 auto; color: var(--primary); font-size: 1rem; line-height: 1; transition: transform .16s ease; }
+.premium-select-trigger[aria-expanded="true"] .premium-select-chevron { transform: rotate(180deg); }
+
+.premium-select-menu {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 7px);
+  right: 0;
+  left: 0;
+  max-height: min(280px, 45vh);
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid #cbd6ee;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 18px 38px rgba(30, 46, 74, .18);
+  backdrop-filter: blur(12px);
+}
+
+.premium-select-option {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #35445c;
+  cursor: pointer;
+  font-size: .8rem;
+  font-weight: 650;
+  text-align: left;
+}
+
+.premium-select-option:hover,
+.premium-select-option:focus-visible { background: var(--primary-soft); color: var(--primary-dark); outline: none; }
+.premium-select-option.is-selected { background: #e9efff; color: var(--primary-dark); }
+.premium-select-option.is-selected::after { margin-left: auto; content: "✓"; font-weight: 900; }
+
+.report-filters .premium-select,
+.mapping-toolbar .premium-select { min-width: 160px; }
+.report-filters .premium-select { flex: 1 1 155px; }
+.mapping-card .premium-select,
+.status-mapping-control .premium-select,
+.product-review-fields .premium-select { width: 100%; }
+.product-selection-toolbar .premium-select { min-width: 150px; flex: 1 1 170px; }
+.management-row .premium-select { min-width: 0; }
+.universal-filter-field .premium-select { display: block; width: 100%; }
+.universal-filter-field .premium-select-trigger { min-height: 44px; }
+
 button {
   -webkit-tap-highlight-color: transparent;
 }
