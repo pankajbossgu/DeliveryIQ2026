@@ -195,9 +195,9 @@ test('Universal Report frontend uses the grouped business report without legacy 
   const fs = require('node:fs');
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /Category Status/); assert.match(html, /data-payment="COD"/); assert.match(html, /Last 30 Days/); assert.match(html, /Summary Report/);
+  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /Category Status/); assert.match(html, /data-payment="COD"/); assert.match(html, /Today/); assert.match(html, /Last 30 Days/); assert.match(html, /Custom range/); assert.match(html, /Summary Report/);
   assert.doesNotMatch(html, /Search order ID|Latest status|name="statusCategory"/);
-  assert.match(script, /\/api\/universal\/grouped/); assert.doesNotMatch(script, /form\.elements\.search/);
+  assert.match(script, /\/api\/universal\/grouped/); assert.match(script, /appliedDateRange/); assert.match(script, /pendingDateRange/); assert.match(script, /validatePendingRange/); assert.doesNotMatch(script, /form\.elements\.search/);
 });
 
 
