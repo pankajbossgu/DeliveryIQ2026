@@ -4,7 +4,7 @@ DeliveryIQ is one Express/MongoDB/Vercel application: `api/index.js` exposes the
 
 `src/upload.js` parses bounded CSV/XLSX uploads (10 MB, 50,000 rows), validates the selected Simple or Full template, normalizes order/product identifiers, and performs order-level conflict checks. `src/mappings.js` provides tenant-scoped status mappings, product mappings, and product categories. `src/reports.js` creates immutable report-row snapshots and computes server-side analytics.
 
-MongoDB is used when `MONGODB_URI` is configured; a non-durable in-memory fallback supports demos and tests. The server owns the temporary `DEFAULT_CLIENT_ID` scope—request query parameters never choose a client. Real authentication must replace this development identity before production multi-tenancy.
+MongoDB is used when `MONGODB_URI` is configured; a non-durable in-memory fallback supports demos and tests. The server owns the temporary `DEFAULT_CLIENT_ID` scope—request query parameters never choose a client. The current single-admin layer verifies `ADMIN_USERNAME` and `ADMIN_PASSWORD` only on the server, then issues a signed, eight-hour HttpOnly session cookie using `SESSION_SECRET`. All DeliveryIQ APIs and application pages require that session; `/login`, `/api/auth/login`, and `/api/health` remain public. This is deliberately not a multi-tenant authorization system.
 
 ## Universal Report read API
 

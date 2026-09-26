@@ -4,7 +4,7 @@ Deploy this repository as one Vercel project. Vercel invokes `api/index.js` for 
 
 ## Environment variables
 
-Configure `NODE_ENV`, `MONGODB_URI`, `APP_ORIGIN`, and `SESSION_SECRET` in Vercel. Do not commit production values. Use `.env.example` only as a template.
+Configure `NODE_ENV`, `MONGODB_URI`, `APP_ORIGIN`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `SESSION_SECRET` in Vercel. `ADMIN_USERNAME` and `ADMIN_PASSWORD` are the current single-admin credentials; `SESSION_SECRET` must be a long, unique random value used to sign the HttpOnly session cookie. Do not commit production values. Use `.env.example` only as a template.
 
 ## Local verification
 
