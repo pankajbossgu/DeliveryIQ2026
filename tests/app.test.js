@@ -313,6 +313,8 @@ test('Upload Data starts with report selection and scopes templates to the chose
   assert.match(script, /Changing the report type will clear the current selected file\. Continue\?/);
   assert.match(script, /function renderProcessing\(process\)/);
   assert.match(script, /current-process-status/);
+  assert.match(script, /Create a new master category/);
+  assert.match(script, /Report cancelled/);
   assert.doesNotMatch(script, /const list = el\('ol', undefined, 'workflow-stepper'\); stages\.forEach/);
 });
 
