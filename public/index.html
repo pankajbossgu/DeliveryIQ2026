@@ -1,155 +1,414 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="DeliveryIQ delivery intelligence for e-commerce teams.">
-    <title>DeliveryIQ | Delivery intelligence</title>
-    <link rel="stylesheet" href="/css/styles.css">
-  </head>
-  <body>
-    <div class="app-shell">
-      <aside class="sidebar" aria-label="Primary navigation">
-        <a class="brand" href="/dashboard" aria-label="DeliveryIQ dashboard"><span class="brand-mark" aria-hidden="true">D</span><span>DeliveryIQ</span></a>
-        <nav class="navigation" aria-label="Workspace">
-          <a class="nav-link is-active" href="/dashboard" data-page="dashboard"><span aria-hidden="true">▦</span>Dashboard</a>
-          <a class="nav-link" href="/upload" data-page="upload"><span aria-hidden="true">↑</span>Upload Data</a>
-          <a class="nav-link" href="/reports" data-page="reports"><span aria-hidden="true">▤</span>Reports</a>
-          <a class="nav-link" href="/universal" data-page="universal"><span aria-hidden="true">◎</span>Universal Report</a>
-          <a class="nav-link" href="/products" data-page="products"><span aria-hidden="true">◇</span>Product Mapping</a>
-          <a class="nav-link" href="/statuses" data-page="statuses"><span aria-hidden="true">↔</span>Status Mapping</a>
-          <a class="nav-link" href="/history" data-page="history"><span aria-hidden="true">◷</span>Report History</a>
-          <a class="nav-link" href="/settings" data-page="settings"><span aria-hidden="true">⚙</span>Settings</a>
-        </nav>
-        <div class="sidebar-footer" aria-live="polite"><span class="status-dot" aria-hidden="true"></span><span id="service-status">Checking service…</span></div>
-      </aside>
-      <main id="app-content" class="workspace main-content">
-        <header class="mobile-header"><button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-navigation">Menu</button><a class="brand" href="/dashboard">DeliveryIQ</a></header>
-        <div class="mobile-menu-backdrop" id="mobile-menu-backdrop" hidden></div><nav class="mobile-navigation" id="mobile-navigation" aria-label="Mobile navigation" hidden><button class="mobile-menu-close" type="button" aria-label="Close navigation">×</button><div id="mobile-navigation-links"></div></nav>
-        <section class="app-page page is-active" data-page-panel="dashboard" aria-labelledby="dashboard-title">
-          <div class="page-heading"><div><p class="eyebrow">DELIVERY PERFORMANCE</p><h1 id="dashboard-title">Delivery overview</h1><p class="page-context">No report selected. Upload a delivery file to begin building your intelligence workspace.</p></div><div class="heading-actions"><button class="button button-secondary" type="button" data-action="filters">Filters <span aria-hidden="true">⌄</span></button><a class="button button-primary" href="/upload">Upload data</a></div></div>
-          <div class="filter-summary" id="filter-summary" hidden><span>Filters will apply to the selected report.</span><button type="button" data-action="close-filters" aria-label="Close filter summary">×</button></div>
-          <section class="empty-state" aria-labelledby="start-title"><div class="empty-icon" aria-hidden="true">↑</div><div><p class="eyebrow">YOUR FIRST REPORT</p><h2 id="start-title">Turn delivery data into clear next steps.</h2><p>Upload a CSV or XLSX file. DeliveryIQ will validate its structure, identify products and statuses, and guide you through the mappings before a report is generated.</p><a class="button button-primary" href="/upload">Upload delivery data</a></div></section>
-          <section class="dashboard-preview" aria-labelledby="dashboard-preview-title"><div class="section-heading"><div><p class="eyebrow">REPORT DASHBOARD</p><h2 id="dashboard-preview-title">What each report will show</h2></div><p>Metrics use distinct orders, even when an order contains multiple product rows.</p></div><div class="metric-grid"><article><span>Total orders</span><strong>—</strong></article><article><span>Delivered</span><strong>—</strong></article><article><span>NDR</span><strong>—</strong></article><article><span>RTO</span><strong>—</strong></article><article><span>In transit</span><strong>—</strong></article><article><span>Cancelled</span><strong>—</strong></article></div><div class="insight-grid"><article><h3>Delivery status distribution</h3><p>Understand how orders move across final delivery categories.</p></article><article><h3>Performance analysis</h3><p>Explore trends, courier results, RTO and NDR patterns by business dimension.</p></article><article><h3>Product and store performance</h3><p>Compare products, categories, order sources, and payment modes.</p></article></div></section>
-        </section>
-<section class="app-page page" data-page-panel="upload" aria-labelledby="upload-title" hidden>
-          <div class="page-heading"><div><p class="eyebrow">NEW REPORT</p><h1 id="upload-title">Choose your report type</h1><p class="page-context">Start by choosing the delivery report that matches the detail available in your file.</p></div></div>
-          <section class="report-type-selector" id="report-type-selector" aria-labelledby="report-type-selector-title">
-            <p class="eyebrow">STEP 1</p><h2 id="report-type-selector-title">Choose your report type</h2>
-            <div class="report-type-options">
-              <article class="report-type-card is-recommended"><span class="recommendation">Recommended</span><h3>Simple Report</h3><p>Essential delivery and order analysis for everyday reporting.</p><ul><li>Order information</li><li>Order date</li><li>Delivery status</li><li>Product information</li><li>Payment information</li></ul><div class="report-type-best-for"><span>Best for</span><strong>Quick and essential delivery analysis.</strong></div><button type="button" class="button button-primary" data-report-type="simple" aria-pressed="false">Select Simple Report</button></article>
-              <article class="report-type-card"><h3>Full Report</h3><p>Detailed order and product analysis with additional commercial and delivery information.</p><ul><li>Everything in Simple Report</li><li>Product quantity</li><li>Unit product price</li><li>Courier information</li><li>Source / store information</li></ul><div class="report-type-best-for"><span>Best for</span><strong>Deeper order, product and delivery analysis.</strong></div><button type="button" class="button button-secondary" data-report-type="full" aria-pressed="false">Select Full Report</button></article>
-            </div>
-            <div class="report-feature-comparison" aria-labelledby="feature-comparison-title"><h3 id="feature-comparison-title">Compare report features</h3><dl><div><dt>Order, date, status, product, and payment information</dt><dd><span>Simple</span>✓</dd><dd><span>Full</span>✓</dd></div><div><dt>Product quantity and unit price</dt><dd><span>Simple</span>—</dd><dd><span>Full</span>✓</dd></div><div><dt>Courier and source / store information</dt><dd><span>Simple</span>—</dd><dd><span>Full</span>✓</dd></div></dl></div>
-          </section>
-          <div id="upload-workflow" hidden>
-            <section class="selected-report-heading" aria-live="polite"><div><p class="eyebrow" id="selected-report-type">Simple Report</p><div class="selected-report-name"><h2 id="selected-report-title">Simple Report</h2><span class="selected-report-badge">✓ Selected</span></div><p id="selected-report-description">Upload your Simple Report file.</p></div><button type="button" class="button button-secondary" id="change-report-type">Change report type</button></section>
-            <ol class="workflow-stepper" aria-label="Report workflow"><li class="is-active"><span class="workflow-step-number" aria-hidden="true">1</span><span>Upload</span></li><li><span class="workflow-step-number" aria-hidden="true">2</span><span>Validation</span></li><li><span class="workflow-step-number" aria-hidden="true">3</span><span>Review</span></li><li><span class="workflow-step-number" aria-hidden="true">4</span><span>Final Review</span></li><li><span class="workflow-step-number" aria-hidden="true">5</span><span>Generate</span></li></ol><section id="review-summary" class="review-summary" hidden aria-live="polite"></section>
-            <section class="upload-card is-locked" id="upload-dropzone" aria-describedby="upload-help" aria-disabled="true" tabindex="0"><div class="upload-icon" aria-hidden="true">⇧</div><h2 id="upload-state-title">Checking for unfinished report...</h2><p id="upload-state-copy">Please wait while we restore your previous report.</p><div class="selected-file" id="selected-file" hidden role="status" aria-live="polite"><span class="selected-file-status" id="selected-file-status">✓ File selected</span><strong class="file-name" id="selected-file-name"></strong><span id="selected-file-meta"></span><div class="selected-file-actions"><label class="button button-secondary" for="file-upload">Change file</label><button type="button" class="button button-secondary" id="remove-selected-file">Remove file</button></div></div><div class="upload-actions"><span>or</span><label class="button button-primary" for="file-upload">Choose File</label></div><input id="file-upload" type="file" accept=".csv,.xlsx" hidden disabled><p class="upload-help" id="upload-help">CSV or XLSX · Up to 50,000 rows · 10 MB maximum</p></section>
-            <section class="template-card" id="selected-template-card" aria-labelledby="template-card-title"><h2 id="template-card-title">Need a template?</h2><p id="template-card-copy"></p><div class="template-actions" id="template-actions"></div></section>
-            <section id="validation-review" class="validation-review" hidden aria-live="polite"></section>
-            <section id="status-review" class="mapping-review" hidden aria-labelledby="status-review-title"><div class="section-heading"><div><p class="eyebrow">STATUS REVIEW</p><h2 id="status-review-title">Delivery Status Review</h2></div></div><div id="status-summary" class="classification-summary"></div><div id="status-cards" class="mapping-cards"></div><div class="drop-categories" id="status-drop-categories" aria-label="Drag a status card to a category"></div><div class="sticky-actions"><button type="button" class="button button-primary" id="continue-products">Continue to products</button></div></section>
-            <section id="product-review" class="mapping-review" hidden aria-labelledby="product-review-title"><div class="section-heading"><div><p class="eyebrow">PRODUCT REVIEW</p><h2 id="product-review-title">Product Review</h2></div></div><div id="product-summary" class="classification-summary"></div><div id="product-cards" class="mapping-cards"></div><div class="sticky-actions"><button type="button" class="button button-primary" id="continue-final-review">Continue to review</button></div></section>
-            <section id="final-review" class="mapping-review" hidden aria-labelledby="final-review-title"><p class="eyebrow">FINAL REVIEW</p><h2 id="final-review-title">Final Review</h2><div id="final-review-content"></div><div class="sticky-actions"><button type="button" class="button button-primary" id="generate-report">Generate report</button></div></section>
-            <section class="process-section" aria-labelledby="process-title"><p class="eyebrow">WHAT HAPPENS NEXT</p><h2 id="process-title">Your data is checked before reporting</h2><ol class="process-list"><li><strong>Validate</strong><span>Columns, file safety, row limits, and quantities are checked.</span></li><li><strong>AI classification</strong><span>Unknown unique products are sent with your current category list for review-only suggestions.</span></li><li><strong>Review and save</strong><span>Approve, change, or manually assign each product before generating the report.</span></li></ol></section>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="DeliveryIQ delivery intelligence for e-commerce teams.">
+  <title>DeliveryIQ | Delivery intelligence</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <a class="brand" href="/dashboard" aria-label="DeliveryIQ dashboard">
+        <span class="brand-mark" aria-hidden="true">D</span><span>DeliveryIQ</span>
+      </a>
+      <nav class="navigation" aria-label="Workspace">
+        <a class="nav-link is-active" href="/dashboard" data-page="dashboard"><span aria-hidden="true">▦</span>Dashboard</a>
+        <a class="nav-link" href="/upload" data-page="upload"><span aria-hidden="true">↑</span>Upload Data</a>
+        <a class="nav-link" href="/reports" data-page="reports"><span aria-hidden="true">▤</span>Reports</a>
+        <a class="nav-link" href="/universal" data-page="universal"><span aria-hidden="true">◎</span>Universal Report</a>
+        <a class="nav-link" href="/products" data-page="products"><span aria-hidden="true">◇</span>Product Mapping</a>
+        <a class="nav-link" href="/statuses" data-page="statuses"><span aria-hidden="true">↔</span>Status Mapping</a>
+        <a class="nav-link" href="/history" data-page="history"><span aria-hidden="true">◷</span>Report History</a>
+        <a class="nav-link" href="/settings" data-page="settings"><span aria-hidden="true">⚙</span>Settings</a>
+      </nav>
+      <div class="sidebar-footer" aria-live="polite"><span class="status-dot" aria-hidden="true"></span><span id="service-status">Checking service…</span></div>
+    </aside>
+
+    <main class="workspace">
+      <header class="mobile-header">
+        <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-navigation">Menu</button>
+        <a class="brand" href="/dashboard">DeliveryIQ</a>
+      </header>
+      <div class="mobile-menu-backdrop" id="mobile-menu-backdrop" hidden></div>
+      <nav class="mobile-navigation" id="mobile-navigation" aria-label="Mobile navigation" hidden>
+        <button class="mobile-menu-close" type="button" aria-label="Close navigation">×</button>
+        <div id="mobile-navigation-links"></div>
+      </nav>
+
+      <!-- Dashboard -->
+      <section class="page is-active" data-page-panel="dashboard" aria-labelledby="dashboard-title">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">DELIVERY PERFORMANCE</p>
+            <h1 id="dashboard-title">Delivery overview</h1>
+            <p class="page-context">No report selected. Upload a delivery file to begin building your intelligence workspace.</p>
           </div>
-        </section><section class="app-page page" data-page-panel="reports" aria-labelledby="reports-title" hidden><p class="eyebrow">REPORTS</p><h1 id="reports-title">Your delivery intelligence.</h1><div id="reports-list" class="reports-list" aria-live="polite"></div><section id="report-detail" class="report-detail" hidden><form id="report-filters" class="report-filters" aria-label="Report filters"><label>From <input name="from" type="date"></label><label>To <input name="to" type="date"></label><label>Status <select name="category"><option value="">All statuses</option></select></label><label>Master category <select name="masterCategory"><option value="">All master categories</option></select></label><label>Product <select name="product"><option value="">All products</option></select></label><label>Product category <select name="productCategory"><option value="">All categories</option></select></label><label>Payment mode <select name="paymentMode"><option value="">All payment modes</option></select></label><label class="full-filter">Courier <select name="courier"><option value="">All couriers</option></select></label><label class="full-filter">Source / store <select name="orderSource"><option value="">All sources</option></select></label><button class="button button-primary" type="submit">Apply filters</button><button class="button button-secondary" id="clear-report-filters" type="button">Clear</button></form><div id="report-output"></div></section></section>
-        <section class="app-page page universal-page" data-page-panel="universal" aria-labelledby="universal-title" hidden>
-          <div class="page-heading universal-header"><div><p class="eyebrow">REPORTING</p><h1 id="universal-title">Universal Report</h1><p class="page-context">Delivery performance overview</p><p id="universal-range" class="universal-range" aria-live="polite">Currently showing data from —</p></div><div class="heading-actions"><div class="download-menu">
-  <button id="universal-export" class="button button-secondary" type="button" aria-expanded="false" aria-haspopup="menu" aria-controls="universal-export-menu">Download Report <span aria-hidden="true">⌄</span></button>
-  <div id="universal-export-menu" class="download-popover" role="menu" aria-label="Download report options" hidden>
-    <div class="download-menu-heading"><strong>Download report</strong><span>Choose a format</span></div>
-    <div class="download-menu-group"><span>Summary report</span><button type="button" data-export="summary-csv" role="menuitem">CSV</button><button type="button" data-export="summary-xlsx" role="menuitem">Excel</button></div>
-    <div class="download-menu-group"><span>Full order report</span><button type="button" data-export="full-csv" role="menuitem">CSV</button><button type="button" data-export="full-xlsx" role="menuitem">Excel</button></div>
-  </div>
-</div></div><button id="universal-refresh" class="button button-secondary" type="button">Refresh</button></div></div>
-          <!-- Legacy compatibility labels: Category Status · data-payment="COD" · Summary Report. -->
-          <form id="universal-filters" class="universal-report-controls" aria-label="Universal Report controls">
-            <input name="analyzeBy" value="product" type="hidden">
-            <input name="paymentMode" value="" type="hidden">
-            <input name="fromDate" value="" type="hidden">
-            <input name="toDate" value="" type="hidden">
-            <input name="categoryStatus" value="" type="hidden">
-            <section class="universal-analysis-section" aria-labelledby="universal-analysis-label">
-              <div class="universal-control-heading">
-                <div>
-                  <span id="universal-analysis-label" class="control-label">Analyze by</span>
-                  <p class="control-help">Choose how the report should be grouped.</p>
-                </div>
+          <div class="heading-actions">
+            <button class="button button-secondary" type="button" data-action="filters">Filters <span aria-hidden="true">⌄</span></button>
+            <a class="button button-primary" href="/upload">Upload data</a>
+          </div>
+        </div>
+        <div class="filter-summary" id="filter-summary" hidden>
+          <span>Filters will apply to the selected report.</span>
+          <button type="button" data-action="close-filters" aria-label="Close filter summary">×</button>
+        </div>
+        <section class="empty-state" aria-labelledby="start-title">
+          <div class="empty-icon" aria-hidden="true">↑</div>
+          <div>
+            <p class="eyebrow">YOUR FIRST REPORT</p>
+            <h2 id="start-title">Turn delivery data into clear next steps.</h2>
+            <p>Upload a CSV or XLSX file. DeliveryIQ will validate its structure, identify products and statuses, and guide you through the mappings before a report is generated.</p>
+            <a class="button button-primary" href="/upload">Upload delivery data</a>
+          </div>
+        </section>
+        <section class="dashboard-preview" aria-labelledby="dashboard-preview-title">
+          <div class="section-heading">
+            <div><p class="eyebrow">REPORT DASHBOARD</p><h2 id="dashboard-preview-title">What each report will show</h2></div>
+            <p>Metrics use distinct orders, even when an order contains multiple product rows.</p>
+          </div>
+          <div class="metric-grid">
+            <article><span>Total orders</span><strong>—</strong></article>
+            <article><span>Delivered</span><strong>—</strong></article>
+            <article><span>NDR</span><strong>—</strong></article>
+            <article><span>RTO</span><strong>—</strong></article>
+            <article><span>In transit</span><strong>—</strong></article>
+            <article><span>Cancelled</span><strong>—</strong></article>
+          </div>
+          <div class="insight-grid">
+            <article><h3>Delivery status distribution</h3><p>Understand how orders move across final delivery categories.</p></article>
+            <article><h3>Performance analysis</h3><p>Explore trends, courier results, RTO and NDR patterns by business dimension.</p></article>
+            <article><h3>Product and store performance</h3><p>Compare products, categories, order sources, and payment modes.</p></article>
+          </div>
+        </section>
+      </section>
+
+      <!-- Upload -->
+      <section class="page" data-page-panel="upload" aria-labelledby="upload-title" hidden>
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">NEW REPORT</p>
+            <h1 id="upload-title">Choose your report type</h1>
+            <p class="page-context">Start by choosing the delivery report that matches the detail available in your file.</p>
+          </div>
+        </div>
+
+        <section class="report-type-selector" id="report-type-selector" aria-labelledby="report-type-selector-title">
+          <p class="eyebrow">STEP 1</p>
+          <h2 id="report-type-selector-title">Choose your report type</h2>
+          <div class="report-type-options">
+            <article class="report-type-card is-recommended">
+              <span class="recommendation">Recommended</span>
+              <h3>Simple Report</h3>
+              <p>Essential delivery and order analysis for everyday reporting.</p>
+              <ul><li>Order information</li><li>Order date</li><li>Delivery status</li><li>Product information</li><li>Payment information</li></ul>
+              <div class="report-type-best-for"><span>Best for</span><strong>Quick and essential delivery analysis.</strong></div>
+              <button type="button" class="button button-primary" data-report-type="simple" aria-pressed="false">Select Simple Report</button>
+            </article>
+            <article class="report-type-card">
+              <h3>Full Report</h3>
+              <p>Detailed order and product analysis with additional commercial and delivery information.</p>
+              <ul><li>Everything in Simple Report</li><li>Product quantity</li><li>Unit product price</li><li>Courier information</li><li>Source / store information</li></ul>
+              <div class="report-type-best-for"><span>Best for</span><strong>Deeper order, product and delivery analysis.</strong></div>
+              <button type="button" class="button button-secondary" data-report-type="full" aria-pressed="false">Select Full Report</button>
+            </article>
+          </div>
+          <div class="report-feature-comparison" aria-labelledby="feature-comparison-title">
+            <h3 id="feature-comparison-title">Compare report features</h3>
+            <dl>
+              <div><dt>Order, date, status, product, and payment information</dt><dd><span>Simple</span>✓</dd><dd><span>Full</span>✓</dd></div>
+              <div><dt>Product quantity and unit price</dt><dd><span>Simple</span>—</dd><dd><span>Full</span>✓</dd></div>
+              <div><dt>Courier and source / store information</dt><dd><span>Simple</span>—</dd><dd><span>Full</span>✓</dd></div>
+            </dl>
+          </div>
+        </section>
+
+        <div id="upload-workflow" hidden>
+          <section class="selected-report-heading" aria-live="polite">
+            <div>
+              <p class="eyebrow" id="selected-report-type">Simple Report</p>
+              <div class="selected-report-name"><h2 id="selected-report-title">Simple Report</h2><span class="selected-report-badge">✓ Selected</span></div>
+              <p id="selected-report-description">Upload your Simple Report file.</p>
+            </div>
+            <button type="button" class="button button-secondary" id="change-report-type">Change report type</button>
+          </section>
+
+          <ol class="workflow-stepper" aria-label="Report workflow">
+            <li class="is-active"><span class="workflow-step-number" aria-hidden="true">1</span><span>Upload</span></li>
+            <li><span class="workflow-step-number" aria-hidden="true">2</span><span>Validation</span></li>
+            <li><span class="workflow-step-number" aria-hidden="true">3</span><span>Review</span></li>
+            <li><span class="workflow-step-number" aria-hidden="true">4</span><span>Final Review</span></li>
+            <li><span class="workflow-step-number" aria-hidden="true">5</span><span>Generate</span></li>
+          </ol>
+
+          <section id="review-summary" class="review-summary" hidden aria-live="polite"></section>
+
+          <section class="upload-card is-locked" id="upload-dropzone" aria-describedby="upload-help" aria-disabled="true" tabindex="0">
+            <div class="upload-icon" aria-hidden="true">⇧</div>
+            <h2 id="upload-state-title">Checking for unfinished report...</h2>
+            <p id="upload-state-copy">Please wait while we restore your previous report.</p>
+            <div class="selected-file" id="selected-file" hidden role="status" aria-live="polite">
+              <span class="selected-file-status" id="selected-file-status">✓ File selected</span>
+              <strong class="file-name" id="selected-file-name"></strong>
+              <span id="selected-file-meta"></span>
+              <div class="selected-file-actions">
+                <label class="button button-secondary" for="file-upload">Change file</label>
+                <button type="button" class="button button-secondary" id="remove-selected-file">Remove file</button>
               </div>
-              <div class="segmented-control universal-analysis-control" role="group" aria-label="Analyze by">
-                <button type="button" data-analyze="product" aria-pressed="true" class="is-active">Analyze by Product</button>
-                <button type="button" data-analyze="product_category" aria-pressed="false">Product Category</button>
-                <button type="button" data-analyze="courier" aria-pressed="false">Courier</button>
+            </div>
+            <div class="upload-actions"><span>or</span><label class="button button-primary" for="file-upload">Choose File</label></div>
+            <input id="file-upload" type="file" accept=".csv,.xlsx" hidden disabled>
+            <p class="upload-help" id="upload-help">CSV or XLSX · Up to 50,000 rows · 10 MB maximum</p>
+          </section>
+
+          <section class="template-card" id="selected-template-card" aria-labelledby="template-card-title">
+            <div><h2 id="template-card-title">Need a template?</h2><p id="template-card-copy"></p></div>
+            <div class="template-actions" id="template-actions"></div>
+          </section>
+
+          <section id="validation-review" class="validation-review" hidden aria-live="polite"></section>
+
+          <section id="status-review" class="mapping-review" hidden aria-labelledby="status-review-title">
+            <div class="section-heading"><div><p class="eyebrow">STATUS REVIEW</p><h2 id="status-review-title">Delivery Status Review</h2></div></div>
+            <div id="status-summary" class="classification-summary"></div>
+            <div id="status-cards" class="mapping-cards"></div>
+            <div class="drop-categories" id="status-drop-categories" aria-label="Drag a status card to a category"></div>
+            <div class="sticky-actions"><button type="button" class="button button-primary" id="continue-products">Continue to products</button></div>
+          </section>
+
+          <section id="product-review" class="mapping-review" hidden aria-labelledby="product-review-title">
+            <div class="section-heading"><div><p class="eyebrow">PRODUCT REVIEW</p><h2 id="product-review-title">Product Review</h2></div></div>
+            <div id="product-summary" class="classification-summary"></div>
+            <div id="product-cards" class="mapping-cards"></div>
+            <div class="sticky-actions"><button type="button" class="button button-primary" id="continue-final-review">Continue to review</button></div>
+          </section>
+
+          <section id="final-review" class="mapping-review" hidden aria-labelledby="final-review-title">
+            <p class="eyebrow">FINAL REVIEW</p>
+            <h2 id="final-review-title">Final Review</h2>
+            <div id="final-review-content"></div>
+            <div class="sticky-actions"><button type="button" class="button button-primary" id="generate-report">Generate report</button></div>
+          </section>
+
+          <section class="process-section" aria-labelledby="process-title">
+            <p class="eyebrow">WHAT HAPPENS NEXT</p>
+            <h2 id="process-title">Your data is checked before reporting</h2>
+            <ol class="process-list">
+              <li><strong>Validate</strong><span>Columns, file safety, row limits, and quantities are checked.</span></li>
+              <li><strong>AI classification</strong><span>Unknown unique products are sent with your current category list for review-only suggestions.</span></li>
+              <li><strong>Review and save</strong><span>Approve, change, or manually assign each product before generating the report.</span></li>
+            </ol>
+          </section>
+        </div>
+      </section>
+
+      <!-- Reports -->
+      <section class="page" data-page-panel="reports" aria-labelledby="reports-title" hidden>
+        <p class="eyebrow">REPORTS</p><h1 id="reports-title">Your delivery intelligence.</h1>
+        <div id="reports-list" class="reports-list" aria-live="polite"></div>
+        <section id="report-detail" class="report-detail" hidden>
+          <form id="report-filters" class="report-filters" aria-label="Report filters">
+            <label>From <input name="from" type="date"></label>
+            <label>To <input name="to" type="date"></label>
+            <label>Status <select name="category"><option value="">All statuses</option></select></label>
+            <label>Master category <select name="masterCategory"><option value="">All master categories</option></select></label>
+            <label>Product <select name="product"><option value="">All products</option></select></label>
+            <label>Product category <select name="productCategory"><option value="">All categories</option></select></label>
+            <label>Payment mode <select name="paymentMode"><option value="">All payment modes</option></select></label>
+            <label class="full-filter">Courier <select name="courier"><option value="">All couriers</option></select></label>
+            <label class="full-filter">Source / store <select name="orderSource"><option value="">All sources</option></select></label>
+            <button class="button button-primary" type="submit">Apply filters</button>
+            <button class="button button-secondary" id="clear-report-filters" type="button">Clear</button>
+          </form>
+          <div id="report-output"></div>
+        </section>
+      </section>
+
+      <!-- Universal Report -->
+      <section class="page universal-page" data-page-panel="universal" aria-labelledby="universal-title" hidden>
+        <div class="page-heading universal-header">
+          <div>
+            <p class="eyebrow">REPORTING</p>
+            <h1 id="universal-title">Universal Report</h1>
+            <p class="page-context">Delivery performance overview</p>
+            <p id="universal-range" class="universal-range" aria-live="polite">Currently showing data from —</p>
+          </div>
+          <div class="heading-actions">
+            <div class="download-menu">
+              <button id="universal-export" class="button button-primary" type="button" aria-expanded="false" aria-controls="universal-export-menu">Download report <span aria-hidden="true">⌄</span></button>
+              <div id="universal-export-menu" class="download-popover" hidden>
+                <strong>Download report</strong>
+                <span>Summary Report</span>
+                <button type="button" data-export="summary-csv">↓ CSV report</button>
+                <button type="button" data-export="summary-xlsx">↓ Excel report</button>
+                <span>Full Order Report</span>
+                <button type="button" data-export="full-csv">↓ CSV report</button>
+                <button type="button" data-export="full-xlsx">↓ Excel report</button>
               </div>
-            </section>
-            <section class="universal-secondary-filters" aria-labelledby="universal-filter-label">
-              <div class="universal-control-heading">
-                <div>
-                  <span id="universal-filter-label" class="control-label">Filters</span>
-                  <p class="control-help">Refine the data shown in the report.</p>
-                </div>
+            </div>
+            <button id="universal-refresh" class="button button-secondary" type="button">Refresh</button>
+          </div>
+        </div>
+
+        <form id="universal-filters" class="universal-report-controls" aria-label="Universal Report controls">
+          <input name="analyzeBy" value="product" type="hidden">
+          <input name="paymentMode" value="" type="hidden">
+          <input name="categoryStatus" value="" type="hidden">
+          <input name="fromDate" value="" type="hidden">
+          <input name="toDate" value="" type="hidden">
+
+          <section class="universal-analysis-section" aria-labelledby="universal-analysis-title">
+            <div class="universal-control-heading">
+              <div>
+                <span class="control-label" id="universal-analysis-title">Analyze by</span>
+                <p class="control-help">Choose the primary dimension for the grouped report.</p>
               </div>
-              <div class="universal-filter-grid">
-                <div class="universal-filter-field universal-date-control">
-                  <span class="universal-field-label">Date range</span>
-                  <button id="universal-date-trigger" class="date-trigger" type="button" aria-expanded="false" aria-haspopup="dialog" aria-controls="universal-date-popover">
-                    <span class="date-trigger-content">
-                      <span class="date-trigger-icon" aria-hidden="true">📅</span>
-                      <span class="date-trigger-text"><small>Date range</small><strong id="universal-date-trigger-label">Select date range</strong></span>
+            </div>
+            <div class="universal-analysis-control" role="group" aria-label="Analyze by">
+              <button type="button" data-analyze="product" class="is-active" aria-pressed="true">Product</button>
+              <button type="button" data-analyze="product_category" aria-pressed="false">Product Category</button>
+              <button type="button" data-analyze="courier" aria-pressed="false">Courier</button>
+            </div>
+          </section>
+
+          <section class="universal-secondary-filters" aria-labelledby="secondary-filter-title">
+            <div class="universal-control-heading">
+              <div>
+                <span class="control-label" id="secondary-filter-title">Filters</span>
+                <p class="control-help">Refine the report without changing the primary analysis.</p>
+              </div>
+            </div>
+            <div class="universal-filter-grid">
+              <div class="universal-filter-field universal-date-control">
+                <span class="universal-field-label">Date range</span>
+                <button id="universal-date-trigger" class="date-trigger" type="button" aria-expanded="false" aria-controls="universal-date-popover">
+                  <span class="date-trigger-content">
+                    <span class="date-trigger-icon" aria-hidden="true">📅</span>
+                    <span>
+                      <small>Date range</small>
+                      <strong id="universal-date-trigger-label">Select date range</strong>
                     </span>
-                    <span class="date-trigger-chevron" aria-hidden="true">⌄</span>
-                  </button>
-                  <section id="universal-date-popover" class="date-popover" role="dialog" aria-modal="false" aria-labelledby="universal-date-picker-title" hidden>
-                    <div class="date-popover-heading">
-                      <div><span class="date-popover-eyebrow">REPORT FILTER</span><h2 id="universal-date-picker-title">Select date range</h2><p>Choose a preset or select a custom range.</p></div>
-                      <button id="universal-date-close" class="date-popover-close" type="button" aria-label="Close date range selector">×</button>
+                  </span>
+                  <span class="date-trigger-chevron" aria-hidden="true">⌄</span>
+                </button>
+
+                <div id="universal-date-popover" class="date-popover" hidden>
+                  <div class="date-popover-heading">
+                    <div>
+                      <span class="date-popover-eyebrow">DATE RANGE</span>
+                      <h2>Choose reporting period</h2>
+                      <p>Select a preset or define an exact start and end date.</p>
                     </div>
-                    <div class="date-picker-section">
-                      <span class="date-picker-section-label">Quick range</span>
-                      <div class="quick-ranges" role="group" aria-label="Quick date ranges">
-                        <button type="button" data-range="today">Today</button><button type="button" data-range="7">Last 7 Days</button><button type="button" data-range="15">Last 15 Days</button><button type="button" data-range="30">Last 30 Days</button><button type="button" data-range="month">This Month</button><button type="button" data-range="custom">Custom</button>
-                      </div>
+                    <button id="universal-date-close" class="date-popover-close" type="button" aria-label="Close date range">×</button>
+                  </div>
+
+                  <div class="date-picker-section">
+                    <span class="date-picker-section-label">Quick ranges</span>
+                    <div class="quick-ranges">
+                      <button type="button" data-range="today">Today</button>
+                      <button type="button" data-range="7">Last 7 Days</button>
+                      <button type="button" data-range="15">Last 15 Days</button>
+                      <button type="button" data-range="30">Last 30 Days</button>
+                      <button type="button" data-range="month">This Month</button>
+                      <button id="universal-date-clear" type="button">Clear</button>
                     </div>
-                    <fieldset class="date-custom">
-                      <legend>Custom range</legend>
-                      <label for="universal-from-date"><span>From</span><input id="universal-from-date" type="date"></label>
-                      <span class="date-range-arrow" aria-hidden="true">→</span>
-                      <label for="universal-to-date"><span>To</span><input id="universal-to-date" type="date"></label>
-                    </fieldset>
-                    <p id="universal-date-error" class="date-error" role="alert" hidden></p>
-                    <div class="date-actions">
-                      <button id="universal-date-clear" type="button" class="button button-secondary">Clear</button>
-                      <button id="universal-date-cancel" type="button" class="button button-secondary">Cancel</button>
-                      <button id="universal-date-apply" type="button" class="button button-primary">Apply date range</button>
-                    </div>
-                  </section>
-                </div>
-                <div class="universal-filter-field">
-                  <span class="universal-field-label">Payment mode</span>
-                  <div id="universal-payment-modes" class="segmented-control payment-control" role="group" aria-label="Payment mode">
-                    <button type="button" data-payment="" aria-pressed="true" class="is-active">All</button>
-                    <button type="button" data-payment="cod" aria-pressed="false">COD</button>
-                    <button type="button" data-payment="prepaid" aria-pressed="false">Prepaid</button>
+                  </div>
+
+                  <fieldset class="date-custom">
+                    <legend>Custom range</legend>
+                    <label>Start date<input id="universal-from-date" type="date"></label>
+                    <span class="date-range-arrow" aria-hidden="true">→</span>
+                    <label>End date<input id="universal-to-date" type="date"></label>
+                  </fieldset>
+
+                  <p id="universal-date-error" class="date-error" role="alert" hidden></p>
+
+                  <div class="date-actions">
+                    <button id="universal-date-cancel" type="button" class="button button-secondary">Cancel</button>
+                    <button id="universal-date-apply" type="button" class="button button-primary">Apply date range</button>
                   </div>
                 </div>
-                <div class="universal-filter-field">
-                  <label class="universal-field-label" for="universal-category-status">Category status</label>
-                  <select id="universal-category-status" class="universal-secondary-select" aria-label="Category status">
-                    <option value="">All statuses</option><option value="Delivered">Delivered</option><option value="In Transit">In Transit</option><option value="NDR">NDR</option><option value="RTO">RTO</option><option value="Cancelled">Cancelled</option><option value="Other">Other</option>
-                  </select>
+              </div>
+
+              <div class="universal-filter-field">
+                <span class="universal-field-label">Payment mode</span>
+                <div id="universal-payment-modes" class="payment-control" role="group" aria-label="Payment mode">
+                  <button type="button" data-payment="" class="is-active" aria-pressed="true">All</button>
+                  <button type="button" data-payment="COD" aria-pressed="false">COD</button>
+                  <button type="button" data-payment="Prepaid" aria-pressed="false">Prepaid</button>
                 </div>
               </div>
-            </section>
-          </form><div id="universal-summary" class="universal-summary" aria-live="polite"></div>
-          <section class="universal-orders" aria-labelledby="universal-orders-title"><div class="section-heading"><div><p class="eyebrow">GROUPED REPORT</p><h2 id="universal-orders-title">Product Wise Report</h2></div><p id="universal-result-summary">Loading report…</p></div><p id="universal-export-status" class="universal-export-status" aria-live="polite"></p><div id="universal-orders-content" aria-live="polite"></div><nav id="universal-pagination" class="universal-pagination" hidden></nav></section>
+
+              <div class="universal-filter-field">
+                <label class="universal-field-label" for="universal-category-status">Category status</label>
+                <select id="universal-category-status" name="statusCategory" class="universal-secondary-select">
+                  <option value="">All statuses</option>
+                </select>
+              </div>
+            </div>
+          </section>
+        </form>
+
+        <div id="universal-summary" class="universal-summary" aria-live="polite"></div>
+
+        <section class="universal-orders" aria-labelledby="universal-orders-title">
+          <div class="section-heading">
+            <div><p class="eyebrow">GROUPED REPORT</p><h2 id="universal-orders-title">Product Wise Performance</h2></div>
+            <p id="universal-result-summary">Loading report…</p>
+          </div>
+          <p id="universal-export-status" class="universal-export-status" aria-live="polite"></p>
+          <div id="universal-orders-content" aria-live="polite"></div>
+          <nav id="universal-pagination" class="universal-pagination" hidden></nav>
         </section>
-        <section class="app-page page" data-page-panel="products" aria-labelledby="products-title" hidden><p class="eyebrow">PRODUCT MAPPING</p><h1 id="products-title">Manage master and product categories.</h1><form id="category-form" class="mapping-toolbar"><label>Master category <input name="masterCategory" maxlength="80" required placeholder="e.g. Beauty & Personal Care"></label><label>Product category <input name="name" maxlength="80" required placeholder="e.g. Nail Serum"></label><button class="button button-primary">Create product category</button></form><div id="category-list" class="category-list"></div><div class="mapping-toolbar"><label>Search product <input id="product-search" placeholder="Search product"></label><label>Category <select id="product-category-filter"><option value="">All categories</option></select></label></div><p class="management-headings">Product · Category · Source · Last updated · Actions</p><div id="product-mappings" class="management-list" aria-live="polite"></div></section>
-        <section class="app-page page" data-page-panel="statuses" aria-labelledby="statuses-title" hidden><p class="eyebrow">STATUS MAPPING</p><h1 id="statuses-title">Make every delivery status meaningful.</h1><p>Client-approved mappings take precedence over the built-in rules.</p><div class="mapping-toolbar"><label>Search raw status <input id="status-search" placeholder="Search status"></label></div><p class="management-headings">Courier / raw status · Final category · Source · Last updated · Actions</p><div id="status-mappings" class="management-list" aria-live="polite"></div></section>
-        <section class="app-page page" data-page-panel="history" aria-labelledby="history-title" hidden><p class="eyebrow">REPORT HISTORY</p><h1 id="history-title">Your completed reports.</h1><div id="history-list" class="reports-list"></div></section>
-        <section class="app-page page placeholder-page" data-page-panel="settings" aria-labelledby="settings-title" hidden><p class="eyebrow">SETTINGS</p><h1 id="settings-title">Workspace settings.</h1><p>Manage your current DeliveryIQ admin session.</p><button id="logout-button" class="button button-secondary" type="button">Logout</button></section>
-      </main>
-    </div>
-    <script src="/js/app.js"></script>
-  </body>
+      </section>
+
+      <!-- Product Mapping -->
+      <section class="page" data-page-panel="products" aria-labelledby="products-title" hidden>
+        <p class="eyebrow">PRODUCT MAPPING</p>
+        <h1 id="products-title">Manage master and product categories.</h1>
+        <form id="category-form" class="mapping-toolbar">
+          <label>Master category <input name="masterCategory" maxlength="80" required placeholder="e.g. Beauty & Personal Care"></label>
+          <label>Product category <input name="name" maxlength="80" required placeholder="e.g. Nail Serum"></label>
+          <button class="button button-primary">Create product category</button>
+        </form>
+        <div id="category-list" class="category-list"></div>
+        <div class="mapping-toolbar">
+          <label>Search product <input id="product-search" placeholder="Search product"></label>
+          <label>Category <select id="product-category-filter"><option value="">All categories</option></select></label>
+        </div>
+        <p class="management-headings">Product · Category · Source · Last updated · Actions</p>
+        <div id="product-mappings" class="management-list" aria-live="polite"></div>
+      </section>
+
+      <!-- Status Mapping -->
+      <section class="page" data-page-panel="statuses" aria-labelledby="statuses-title" hidden>
+        <p class="eyebrow">STATUS MAPPING</p>
+        <h1 id="statuses-title">Make every delivery status meaningful.</h1>
+        <p>Client-approved mappings take precedence over the built-in rules.</p>
+        <div class="mapping-toolbar">
+          <label>Search raw status <input id="status-search" placeholder="Search status"></label>
+        </div>
+        <p class="management-headings">Courier / raw status · Final category · Source · Last updated · Actions</p>
+        <div id="status-mappings" class="management-list" aria-live="polite"></div>
+      </section>
+
+      <!-- History -->
+      <section class="page" data-page-panel="history" aria-labelledby="history-title" hidden>
+        <p class="eyebrow">REPORT HISTORY</p>
+        <h1 id="history-title">Your completed reports.</h1>
+        <div id="history-list" class="reports-list"></div>
+      </section>
+
+      <!-- Settings -->
+      <section class="page placeholder-page" data-page-panel="settings" aria-labelledby="settings-title" hidden>
+        <p class="eyebrow">SETTINGS</p>
+        <h1 id="settings-title">Workspace settings.</h1>
+        <p>Manage your current DeliveryIQ admin session.</p>
+        <button id="logout-button" class="button button-secondary" type="button">Logout</button>
+      </section>
+    </main>
+  </div>
+  <script src="/js/app.js"></script>
+</body>
 </html>
