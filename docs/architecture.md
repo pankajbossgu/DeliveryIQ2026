@@ -41,3 +41,16 @@ The export route has a tighter 20-request-per-15-minute limiter in addition to
 the application-wide API limiter. Universal query parsing rejects unsupported
 parameters (including MongoDB operator-shaped keys); the legacy browser
 `clientId` parameter remains ignored so it cannot affect server-side scope.
+
+## Universal Report basis
+
+The grouped report and CSV/XLSX summary exports use the selected **Report Basis**.
+The existing `deliveryView` query parameter is retained for compatibility: `all_orders`
+(default) uses all orders, and `shipped_orders` uses Delivered + NDR + RTO.
+The server returns `orderTotal`, `orderTotalLabel`, `shippedOrders`, and status
+`percentages` for the summary and each group, using that group's own counts.
+Raw `totalOrders` and status counts remain unchanged. In shipped mode, percentages
+for In Transit, Cancelled, and Other are `null` (outside the basis); their counts
+remain visible. A zero denominator returns zero for applicable percentages.
+Summary exports identify the basis and use its order total and delivery percentage;
+full order exports retain every matching order and product line.
