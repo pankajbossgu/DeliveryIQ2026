@@ -55,6 +55,17 @@ test('report process keeps a complete review snapshot and only one active proces
   await store.updateReview('client-a', first.job.processId, 'product', 'A', { status: 'AI Approved', classificationRequired: false, masterCategory: 'Beauty', productCategory: 'Serum' });
   const restored = await store.get('client-a', first.job.processId); assert.equal(restored.result.classifications.products.length, 2); assert.equal(restored.result.classifications.products[0].classificationRequired, false); assert.equal(restored.result.classifications.products[1].classificationRequired, true);
 });
+test('cancelling a processing job prevents late stage updates from restoring it', async () => {
+  const { ProcessingStore } = require('../src/reports'); const store = new ProcessingStore({ mongoUri: null });
+  const input = { summary: { detectedProducts: 1 }, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] };
+  const created = await store.createValidated('client-cancel', input, 'request-cancel');
+  let release; const waiting = new Promise((resolve) => { release = resolve; });
+  const running = store.start('client-cancel', created.job.processId, async (job, stage) => { await stage('mapping_statuses'); await waiting; await stage('finalizing_report'); return { classifications: { statuses: [], products: [] } }; });
+  await new Promise((resolve) => setImmediate(resolve));
+  await store.cancel('client-cancel', created.job.processId); release();
+  const finished = await running; const restored = await store.get('client-cancel', created.job.processId);
+  assert.equal(finished.status, 'cancelled'); assert.equal(restored.status, 'cancelled'); assert.equal(restored.stage, 'cancelled');
+});
 test('CSV preserves actual courier status separately from normalized status category', () => {
   const output = csv([{ orderId: 'ORD001', orderDate: '2026-01-01', originalStatus: 'Out for Delivery', category: 'In Transit', originalProductName: 'Nail Serum', masterCategory: 'Beauty', productCategory: 'Nail Serum', paymentMode: 'COD' }], 'simple');
   assert.match(output, /Actual Status/); assert.match(output, /Status Category/); assert.match(output, /"Out for Delivery","In Transit"/);
@@ -229,8 +240,8 @@ test('unfinished process index includes failed jobs for existing deployments', (
 test('Upload Data restoration has dedicated lifecycle states and does not reuse file validation errors', () => {
   const fs = require('node:fs');
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(script, /Checking for unfinished report\.\.\./);
-  assert.match(script, /Please wait while we restore your previous report\./);
+  assert.match(script, /Checking your reports\.\.\./);
+  assert.match(script, /Checking for unfinished reports\./);
   assert.match(script, /Couldn't check your current report\./);
   assert.match(script, /Couldn't restore your report\./);
   assert.match(script, /Previous report needs your attention/);
@@ -251,6 +262,17 @@ test('Upload Data restoration has dedicated lifecycle states and does not reuse 
   assert.match(script, /Unsupported file type/);
   assert.match(script, /Maximum supported size: 10 MB/);
   assert.match(script, /Checking your file…/);
+  assert.match(script, /Cancel this report\?/);
+  assert.match(script, /Cancelling report\.\.\./);
+  assert.match(script, /Keep Processing/);
+  assert.match(script, /Category required/);
+  assert.match(script, /Assign Category/);
+  assert.match(script, /Create new category/);
+  assert.match(script, /Select All/);
+  assert.match(script, /Apply to Selected/);
+  assert.match(script, /Updating \$\{selected\.length\} status mappings/);
+  assert.match(script, /statusErrors/);
+  assert.match(script, /progress\.textContent = 'Cancelling report\.\.\.'/);
   const server = fs.readFileSync(require('node:path').join(__dirname, '..', 'src', 'app.js'), 'utf8');
   assert.match(server, /function activeProcessUploadMessage\(/);
   assert.ok(server.indexOf('const active = await processingStore.getActiveProcess(clientId);') < server.indexOf('const result = validateUpload'));
