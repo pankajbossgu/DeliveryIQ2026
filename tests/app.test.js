@@ -155,6 +155,8 @@ test('universal read APIs paginate, validate, sort, and remain scoped to the ser
     response = await authenticatedFetch(base, `/api/universal/summary`); body = await response.json(); assert.deepEqual(body.summary, { totalOrders: 2, totalValue: 30, totalQuantity: 3, byStatusCategory: { Delivered: 2 }, byStatus: { Delivered: 2 } });
     response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=product&paymentMode=COD&clientId=other-client`); body = await response.json(); assert.equal(body.report.groupLabel, 'Product'); assert.equal(body.report.totals.totalOrders, 2); assert.equal(body.report.rows.reduce((total, row) => total + row.delivered, 0), 2); assert.deepEqual(body.report.paymentModes, ['COD']);
     response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=paymentMode`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=product&deliveryView=invalid`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=product`); body = await response.json(); assert.equal(body.report.deliveryView, 'all_orders');
     response = await authenticatedFetch(base, `/api/universal/summary?search=ORD-2&clientId=other-client`); body = await response.json(); assert.equal(body.summary.totalOrders, 1); assert.equal(body.summary.totalQuantity, 1);
     response = await authenticatedFetch(base, `/api/universal/analytics?status=Delivered&fromDate=2026-01-02&toDate=2026-01-02&reportFromDate=2026-02-01&reportToDate=2026-02-01&clientId=other-client`); body = await response.json(); assert.equal(body.analytics.summary.totalOrders, 1); assert.equal(body.analytics.statusCategories[0].percentage, 100); assert.equal(body.analytics.trends[0].date, '2026-01-02');
     response = await authenticatedFetch(base, `/api/universal/analytics?fromDate=2026-01-02&toDate=2026-01-01`); assert.equal(response.status, 422);
@@ -180,7 +182,8 @@ test('universal CSV export streams only filtered current tenant orders and prese
     response = await authenticatedFetch(base, `/api/universal/export?search[$regex]=SAFE`); assert.equal(response.status, 422);
     response = await authenticatedFetch(base, `/api/universal/export?statusCategory=Cancelled`); assert.equal(response.status, 200); assert.match(await response.text(), /Order ID/);
     response = await authenticatedFetch(base, `/api/universal/export?fromDate=2026-01-01&toDate=2026-01-01&exportType=full&format=xlsx`); assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /spreadsheetml/); assert.deepEqual([...new Uint8Array(await response.arrayBuffer()).slice(0, 2)], [80, 75]);
-    response = await authenticatedFetch(base, `/api/universal/export?fromDate=2026-01-01&toDate=2026-01-01&analyzeBy=product&exportType=summary&format=xlsx`); assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /spreadsheetml/); assert.deepEqual([...new Uint8Array(await response.arrayBuffer()).slice(0, 2)], [80, 75]);
+    response = await authenticatedFetch(base, `/api/universal/export?fromDate=2026-01-02&toDate=2026-01-02&analyzeBy=product&deliveryView=shipped_orders&exportType=summary&format=csv`); const summaryCsv = await response.text(); assert.equal(response.status, 200); assert.match(summaryCsv, /"Delivery % View","Shipped Orders"/); assert.match(summaryCsv, /"Normal","1","0","0","0","0","0","1","100"/);
+    response = await authenticatedFetch(base, `/api/universal/export?fromDate=2026-01-02&toDate=2026-01-02&analyzeBy=product&deliveryView=shipped_orders&exportType=summary&format=xlsx`); assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /spreadsheetml/); assert.deepEqual([...new Uint8Array(await response.arrayBuffer()).slice(0, 2)], [80, 75]);
   } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
 });
 
@@ -195,9 +198,9 @@ test('Universal Report frontend uses the grouped business report without legacy 
   const fs = require('node:fs');
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /Category Status/); assert.match(html, /data-payment="COD"/); assert.match(html, /Last 30 Days/); assert.match(html, /Summary Report/);
-  assert.doesNotMatch(html, /Search order ID|Latest status|name="statusCategory"/);
-  assert.match(script, /\/api\/universal\/grouped/); assert.match(script, /\['Delivery %', 'deliveryPercentage'\]/); assert.doesNotMatch(script, /form\.elements\.search/);
+  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /Delivery % View/); assert.match(html, /All Orders/); assert.match(html, /Shipped Orders/); assert.match(html, /name="deliveryView" value="all_orders"/); assert.match(html, /data-payment="COD"/); assert.match(html, /Last 30 Days/); assert.match(html, /Summary Report/);
+  assert.doesNotMatch(html, /Search order ID|Latest status|Category Status|name="categoryStatus"/);
+  assert.match(script, /\/api\/universal\/grouped/); assert.match(script, /data-delivery-view/); assert.match(script, /\['Delivery %', 'deliveryPercentage'\]/); assert.doesNotMatch(script, /form\.elements\.search/);
 });
 
 
@@ -215,6 +218,27 @@ test('universal grouped report uses normalized dimensions, tenant scope, and pay
   const filtered = await store.groupedReport('a', { analyzeBy: 'category_status', paymentMode: 'COD' });
   assert.equal(filtered.totals.totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'Delivered').totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'Delivered').deliveryPercentage, 100); assert.equal(filtered.rows.find((row) => row.name === 'RTO').totalOrders, 0); assert.equal(filtered.rows.find((row) => row.name === 'RTO').deliveryPercentage, 0);
 });
+test('grouped Delivery % uses each row denominator for every supported dimension and mode', async () => {
+  const store = new UniversalStore({ mongoUri: null });
+  await store.syncCompletedReport('a', universalReport('a', 'DV-1', '2026-02-01T00:00:00Z'), [
+    { ...universalRow('P-DEL', '2026-01-01', 'Alpha'), productCategory: 'A', courier: 'North' },
+    { ...universalRow('P-NDR', '2026-01-01', 'Alpha'), category: 'NDR', originalStatus: 'Address issue', productCategory: 'A', courier: 'North' },
+    { ...universalRow('P-RTO', '2026-01-01', 'Beta'), category: 'RTO', originalStatus: 'Returned', productCategory: 'B', courier: 'South' },
+    { ...universalRow('P-CANCEL', '2026-01-01', 'Beta'), category: 'Cancelled', originalStatus: 'Cancelled', productCategory: 'B', courier: 'South' },
+    { ...universalRow('P-ZERO', '2026-01-01', 'Gamma'), category: 'Cancelled', originalStatus: 'Cancelled', productCategory: 'C', courier: 'Zero' }
+  ]);
+  for (const analyzeBy of ['product', 'product_category', 'courier']) {
+    const all = await store.groupedReport('a', { analyzeBy });
+    const shipped = await store.groupedReport('a', { analyzeBy, deliveryView: 'shipped_orders' });
+    const alpha = all.rows.find((row) => row.name === (analyzeBy === 'courier' ? 'North' : analyzeBy === 'product_category' ? 'A' : 'Alpha'));
+    const beta = shipped.rows.find((row) => row.name === (analyzeBy === 'courier' ? 'South' : analyzeBy === 'product_category' ? 'B' : 'Beta'));
+    const zero = shipped.rows.find((row) => row.name === (analyzeBy === 'courier' ? 'Zero' : analyzeBy === 'product_category' ? 'C' : 'Gamma'));
+    assert.equal(alpha.deliveryPercentage, 50); assert.equal(beta.deliveryPercentage, 0); assert.equal(zero.deliveryPercentage, 0);
+    assert.equal(shipped.rows.find((row) => row.name === alpha.name).deliveryPercentage, 50);
+    assert.equal(shipped.totals.deliveryPercentage, 33.33); assert.equal(shipped.deliveryView, 'shipped_orders');
+  }
+});
+
 test('universal analytics are tenant-scoped, filter-aware, and preserve product-line quantities', async () => {
   const store = new UniversalStore({ mongoUri: null });
   await store.syncCompletedReport('a', universalReport('a', 'A1', '2026-02-01T00:00:00Z'), [
