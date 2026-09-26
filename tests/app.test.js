@@ -330,3 +330,15 @@ test('Report review bulk updates are server-authoritative and completion directs
   assert.match(script, /function renderCompletion/);
   assert.match(script, /Open Universal Report/);
 });
+
+test('bulk mapping writes unique product and status selections without repeated process saves', async () => {
+  const store = new MappingStore({ mongoUri: null }); const { master, product } = await taxonomy(store, 'bulk-client');
+  await store.saveProductMappings('bulk-client', ['Widget', 'Widget', 'Gadget'], { masterCategory: master._id, productCategory: product.name, source: 'AI Approved' });
+  assert.equal((await store.list('product', 'bulk-client')).length, 2);
+  await store.saveMappings('bulk-client', 'status', ['Awaiting pickup', 'Awaiting pickup', 'Packed'], 'In Transit');
+  assert.equal((await store.list('status', 'bulk-client')).length, 2);
+  const processes = new ProcessingStore({ mongoUri: null }); const created = await processes.createValidated('bulk-client', { summary: {}, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] }, 'bulk-process');
+  created.job.status = 'review_required'; created.job.result = { classifications: { statuses: [], products: [{ value: 'Widget', classificationRequired: true }, { value: 'Gadget', classificationRequired: true }] } }; await processes.save(created.job);
+  const updated = await processes.updateReviews('bulk-client', created.job.processId, 'product', [{ value: 'Widget', classificationRequired: false }, { value: 'Gadget', classificationRequired: false }]);
+  assert.equal(updated.result.classifications.products.filter((item) => !item.classificationRequired).length, 2);
+});

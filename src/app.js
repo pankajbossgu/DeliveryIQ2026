@@ -133,9 +133,32 @@ app.post('/api/report-processes/:processId/review/:kind/bulk', async (request, r
   const missingValue = values.find((value) => !reviewItems.some((item) => item.value === value));
   if (missingValue) return response.status(404).json({ success: false, code: 'REVIEW_ITEM_NOT_FOUND', message: `Review item ${missingValue} could not be found.` });
   try {
-    for (const value of values) await applyReviewDecision(job, kind, value, request.body);
-    const saved = await processingStore.get(clientId, job.processId);
-    return response.json({ success: true, updated: values.length, process: processingStore.public(saved) });
+    let updates;
+    if (kind === 'status') {
+      const mappings = await mappingStore.saveMappings(clientId, 'status', values, request.body?.category);
+      updates = mappings.map((mapping) => ({ value: mapping.originalExample, category: mapping.category, status: 'Client Modified', classificationRequired: false }));
+    } else if (Array.isArray(request.body?.decisions)) {
+      const decisions = request.body.decisions.filter((decision) => values.includes(String(decision?.value || '').trim()));
+      if (decisions.length !== values.length || new Set(decisions.map((decision) => decision.value)).size !== values.length) throw Object.assign(new Error('Invalid review decisions.'), { code: 'INVALID_BULK_REVIEW' });
+      const rejected = decisions.filter((decision) => decision.action === 'reject'); const approved = decisions.filter((decision) => decision.action === 'approve' || decision.action === 'change' || decision.action === 'manual');
+      if (rejected.length + approved.length !== values.length) throw Object.assign(new Error('Invalid review decisions.'), { code: 'INVALID_BULK_REVIEW' });
+      updates = [];
+      if (rejected.length) { const rejectedValues = rejected.map((decision) => decision.value); await mappingStore.decideSuggestions(clientId, rejectedValues, 'Client Rejected'); updates.push(...rejectedValues.map((value) => ({ value, suggestionStatus: 'Client Rejected', status: 'Client Rejected', classificationRequired: true, manualReason: 'AI suggestion rejected. Please assign a category manually.', suggestedCategory: null, suggestedMasterCategory: null, suggestedProductCategory: null, mappingSource: 'needs-review' }))); }
+      const groups = new Map(); approved.forEach((decision) => { const source = decision.action === 'change' ? 'Client Modified' : decision.action === 'approve' ? 'AI Approved' : 'Manual'; const key = `${source}\u001f${decision.masterCategory}\u001f${decision.productCategory}`; const group = groups.get(key) || { source, masterCategory: decision.masterCategory, productCategory: decision.productCategory, values: [] }; group.values.push(decision.value); groups.set(key, group); });
+      for (const group of groups.values()) { const mappings = await mappingStore.saveProductMappings(clientId, group.values, group); await mappingStore.decideSuggestions(clientId, group.values, group.source, group); updates.push(...mappings.map((mapping) => ({ value: mapping.originalExample, masterCategory: mapping.masterCategory, productCategory: mapping.productCategory, category: mapping.productCategory, mappingSource: group.source, suggestionStatus: group.source, status: group.source, classificationRequired: false, manualReason: null }))); }
+    } else if (request.body?.action === 'reject') {
+      await mappingStore.decideSuggestions(clientId, values, 'Client Rejected');
+      updates = values.map((value) => ({ value, suggestionStatus: 'Client Rejected', status: 'Client Rejected', classificationRequired: true, manualReason: 'AI suggestion rejected. Please assign a category manually.', suggestedCategory: null, suggestedMasterCategory: null, suggestedProductCategory: null, mappingSource: 'needs-review' }));
+    } else {
+      const source = request.body?.action === 'change' ? 'Client Modified' : request.body?.action === 'approve' ? 'AI Approved' : 'Manual';
+      const mappings = await mappingStore.saveProductMappings(clientId, values, { masterCategory: request.body?.masterCategory, productCategory: request.body?.productCategory, source });
+      updates = mappings.map((mapping) => ({ value: mapping.originalExample, masterCategory: mapping.masterCategory, productCategory: mapping.productCategory, category: mapping.productCategory, mappingSource: source, suggestionStatus: source, status: source, classificationRequired: false, manualReason: null }));
+      await mappingStore.decideSuggestions(clientId, values, source, { masterCategory: request.body?.masterCategory, productCategory: request.body?.productCategory });
+    }
+    const saved = await processingStore.updateReviews(clientId, job.processId, kind, updates);
+    if (!saved) return response.status(409).json({ success: false, code: 'REVIEW_CONFLICT', message: 'This review changed in another window. Refresh and try again.' });
+    console.info(JSON.stringify({ event: 'report_review_bulk_updated', processId: job.processId, kind, requested: values.length, updated: updates.length, processWrites: 1 }));
+    return response.json({ success: true, updated: updates.length, failed: [], process: processingStore.public(saved) });
   } catch (error) { return response.status(422).json({ success: false, code: error.code || 'INVALID_MAPPING', message: 'Select a valid category before saving.' }); }
 });
 app.post('/api/report-processes/:processId/review/:kind/:value', async (request, response) => {
