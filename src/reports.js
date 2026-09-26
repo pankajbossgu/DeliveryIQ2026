@@ -219,7 +219,8 @@ class ReportStore {
   async list(clientId) { if (await this.database()) return Report.find({ clientId, reportStatus: 'completed' }).sort({ createdAt: -1 }).lean(); return [...this.memory.values()].filter((report) => report.clientId === clientId && report.reportStatus === 'completed').sort((a, b) => b.createdAt - a.createdAt); }
   async detail(clientId, reportId, filters = {}) { const report = await (await this.database() ? Report.findOne({ clientId, reportId }).lean() : this.memory.get(reportId)); if (!report || report.clientId !== clientId) return null; const allRows = await (await this.database() ? ReportRow.find({ clientId, reportId }).lean() : this.rows.get(reportId) || []); const rows = applyFilters(allRows, filters, report.templateType); return { ...report, filtered: aggregate(rows, report.templateType), filters: { availableDimensions: report.availableDimensions }, exportRows: rows }; }
 }
-const ACTIVE_PROCESS_STATUSES = ['queued', 'processing', 'review_required', 'finalizing'];
+// A failed process is still unfinished: only completion or explicit removal releases the client.
+const ACTIVE_PROCESS_STATUSES = ['queued', 'processing', 'review_required', 'finalizing', 'failed'];
 const processSchema = new mongoose.Schema({
   processId: { type: String, unique: true, index: true }, clientId: { type: String, index: true }, requestId: String,
   status: { type: String, index: true }, stage: String, input: mongoose.Schema.Types.Mixed,

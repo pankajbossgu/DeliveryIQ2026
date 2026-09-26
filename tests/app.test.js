@@ -176,3 +176,36 @@ test('Report Review frontend uses accessible custom dialogs and selection-based 
   assert.match(script, /Reject suggestion/);
   assert.doesNotMatch(script, /Approve All AI Suggestions/);
 });
+
+test('unfinished failed processes remain active until the client explicitly removes them', async () => {
+  const { ProcessingStore } = require('../src/reports');
+  const store = new ProcessingStore({ mongoUri: null });
+  const input = { summary: { detectedProducts: 1 }, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] };
+  const first = await store.createValidated('client-active', input, 'request-a');
+  first.job.status = 'failed';
+  await store.save(first.job);
+  assert.equal((await store.getActiveProcess('client-active')).processId, first.job.processId);
+  const second = await store.createValidated('client-active', input, 'request-b');
+  assert.equal(second.existing, true);
+  await store.cancel('client-active', first.job.processId);
+  assert.equal(await store.getActiveProcess('client-active'), null);
+});
+
+test('Upload Data restoration has dedicated lifecycle states and does not reuse file validation errors', () => {
+  const fs = require('node:fs');
+  const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(script, /Checking your reports\.\.\./);
+  assert.match(script, /Restoring your latest report\./);
+  assert.match(script, /Couldn't check your current report\./);
+  assert.match(script, /Couldn't restore your report\./);
+  assert.match(script, /Report ready for review/);
+  assert.match(script, /Continue Review/);
+  assert.match(script, /function hasReviewSnapshot\(/);
+  assert.match(script, /function unresolvedCount\(/);
+  assert.match(script, /ACTIVE_REPORT_PROCESS/);
+  assert.match(script, /refreshConfig\(\)\.catch\(\(\) => \{\}\)/);
+  assert.match(script, /clearNotice\(\); if \(!\/\\\.\(csv\|xlsx\)/);
+  const server = fs.readFileSync(require('node:path').join(__dirname, '..', 'src', 'app.js'), 'utf8');
+  assert.match(server, /function activeProcessUploadMessage\(/);
+  assert.ok(server.indexOf('const active = await processingStore.getActiveProcess(clientId);') < server.indexOf('const result = validateUpload'));
+});
