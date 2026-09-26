@@ -17,7 +17,7 @@ let statusBulkRequestId = 0;
 const $ = (selector) => document.querySelector(selector);
 function el(tag, text, className) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; }
 function clear(node) { node.replaceChildren(); }
-function page(name) { if (name === 'universal') { state.universal.datePickerOpen = false; state.universal.downloadMenuOpen = false; const datePopover = $('#universal-date-popover'); const exportMenu = $('#universal-export-menu'); if (datePopover) datePopover.hidden = true; if (exportMenu) exportMenu.hidden = true; $('#universal-date-trigger')?.setAttribute('aria-expanded', 'false'); $('#universal-export')?.setAttribute('aria-expanded', 'false'); universalResetForNavigation(); } if (typeof closeMobileMenu === 'function') closeMobileMenu(); document.querySelectorAll('[data-page-panel]').forEach((node) => { node.hidden = node.dataset.pagePanel !== name; }); document.querySelectorAll('[data-page]').forEach((node) => node.classList.toggle('is-active', node.dataset.page === name)); if (name === 'upload') restoreActiveProcess(); if (name === 'reports' || name === 'history') loadReports(); if (name === 'universal') loadUniversal(); if (name === 'products') loadProducts(); if (name === 'statuses') loadStatuses(); }
+function page(name) { if (name === 'universal') { state.universal.datePickerOpen = false; state.universal.downloadMenuOpen = false; const datePopover = $('#universal-date-popover'); const exportMenu = $('#universal-export-menu'); if (datePopover) datePopover.hidden = true; if (exportMenu) exportMenu.hidden = true; $('#universal-date-trigger')?.setAttribute('aria-expanded', 'false'); $('#universal-export')?.setAttribute('aria-expanded', 'false'); universalResetForNavigation(); } if (typeof closeMobileMenu === 'function') closeMobileMenu(); document.querySelectorAll('[data-page-panel]').forEach((node) => { node.hidden = node.dataset.pagePanel !== name; }); document.querySelectorAll('[data-page]').forEach((node) => node.classList.toggle('is-active', node.dataset.page === name)); if (name === 'upload') restoreActiveProcess(); if (name === 'reports' || name === 'history') loadReports(); if (name === 'universal') { if (state.universal.report) renderUniversalCachedReport(); loadUniversal({ preserveExisting: Boolean(state.universal.report) }); } if (name === 'products') loadProducts(); if (name === 'statuses') loadStatuses(); }
 function setUpload(title, text) { $('#upload-state-title').textContent = title; $('#upload-state-copy').textContent = text; }
 function setWorkflowStep(active, completed = []) { const steps = [...document.querySelectorAll('#upload-workflow > .workflow-stepper li')]; steps.forEach((step, index) => { const complete = completed.includes(index); step.classList.toggle('is-active', index === active); step.classList.toggle('is-complete', complete); step.setAttribute('aria-current', index === active ? 'step' : 'false'); const number = step.querySelector('.workflow-step-number'); if (number) number.textContent = complete ? '✓' : String(index + 1); }); }
 function fileSize(bytes) { return `${(bytes / (1024 * 1024)).toFixed(bytes >= 1024 * 1024 ? 1 : 2)} MB`; }
@@ -32,6 +32,18 @@ function changeReportType() { const clearSelection = () => { state.selectedRepor
 function setUploadLocked(process) { const locked = state.restoring || state.validating || Boolean(process); $('#file-upload').disabled = locked; $('#upload-dropzone').classList.toggle('is-locked', locked); $('#upload-dropzone').setAttribute('aria-disabled', String(locked)); $('#remove-selected-file').disabled = locked; document.querySelectorAll('[data-report-type]').forEach((button) => { button.disabled = locked; }); $('#change-report-type').disabled = locked; if (process && process.status !== 'review_required') setUpload('Report processing in progress', `Current report: ${process.file.name}. Processing is underway.`); }
 function notice(title, text, bad = false) { const node = $('#validation-review'); node.hidden = false; node.classList.toggle('is-error', bad); node.classList.remove('validation-loading'); node.removeAttribute('role'); clear(node); node.append(el('h2', title), el('p', text)); return node; }
 function clearNotice() { $('#validation-review').hidden = true; clear($('#validation-review')); }
+function resetUploadTransientUI() {
+  ['#upload-restore-skeleton', '[data-upload-validation-loader]', '[data-process-current-stage]', '[data-report-complete-actions]', '#validation-review', '#status-review', '#product-review', '#final-review', '#review-summary'].forEach((selector) => {
+    document.querySelectorAll(selector).forEach((node) => {
+      node.hidden = true;
+      if (selector === '#validation-review' || selector === '#review-summary') clear(node);
+    });
+  });
+  setUploadValidationLoading(false);
+  const stage = document.querySelector('[data-process-current-stage]');
+  if (stage) stage.classList.remove('is-visible');
+}
+
 function validationLoading() { const target = notice('Checking your file…', 'Validating the uploaded file structure, columns, and rows.'); target.classList.add('validation-loading'); target.setAttribute('aria-live', 'assertive'); target.prepend(el('span', '', 'report-spinner')); return target; }
 function setUploadValidationLoading(isLoading) { const button = document.querySelector('[data-action="validate-upload"]'); const loader = document.querySelector('[data-upload-validation-loader]'); if (button) { button.disabled = isLoading; button.setAttribute('aria-busy', String(isLoading)); } if (loader) loader.hidden = !isLoading; }
 function validationAction(target) { const actions = el('div', undefined, 'validation-actions'); const choose = el('button', 'Choose another file', 'button button-primary'); choose.type = 'button'; choose.addEventListener('click', () => $('#file-upload').click()); const template = REPORT_TEMPLATES[state.selectedReportType]; actions.append(choose); if (template) { const download = el('a', 'Download template', 'button button-secondary'); download.href = template.downloads[0][1]; download.download = ''; actions.append(download); } target.append(actions); }
@@ -42,7 +54,7 @@ function validationFailure(result) { const target = notice('⚠ File could not b
   if (details.conflicts?.length) { const group = el('section', undefined, 'validation-issue-group'); group.append(el('h3', 'Conflicting order data')); details.conflicts.slice(0, 8).forEach((item) => group.append(el('p', `${item.orderId} — ${item.field} differs on rows ${item.rows.slice(0, 5).join(', ')}${item.rows.length > 5 ? '…' : ''}.`))); target.append(group); }
   validationAction(target); return target;
 }
-function showRestoring() { document.body.classList.add('upload-restoring'); state.upload = null; $('#file-upload').value = ''; $('#upload-restore-skeleton').hidden = false; $('#upload-restore-skeleton').setAttribute('aria-label', 'Checking your reports... Checking for unfinished reports.'); $('#report-type-selector').hidden = true; $('#upload-workflow').hidden = true; clearNotice(); }
+function showRestoring() { document.body.classList.add('upload-restoring'); state.upload = null; $('#file-upload').value = ''; resetUploadTransientUI(); $('#upload-restore-skeleton').hidden = false; $('#upload-restore-skeleton').setAttribute('aria-label', 'Checking your reports... Checking for unfinished reports.'); $('#report-type-selector').hidden = true; $('#upload-workflow').hidden = true; clearNotice(); }
 function hideRestoreModal() { $('#upload-restore-skeleton').hidden = true; state.restoreModal?.remove(); state.restoreModal = null; }
 function restorationFailed(message = "Couldn't check your current report.") { const target = notice(message, 'Please try again.', true); const retry = el('button', 'Retry', 'button button-primary'); retry.type = 'button'; retry.addEventListener('click', restoreActiveProcess); target.append(retry); }
 function hasReviewSnapshot(process) { return Array.isArray(process?.classifications?.statuses) && Array.isArray(process?.classifications?.products); }
@@ -56,12 +68,57 @@ function activeUploadBlocked() { if (!state.processId) return false; const proce
 async function validateFile(file) { if (state.restoring || state.validating || !state.selectedReportType || !file || activeUploadBlocked()) return; state.upload = file; clearNotice(); setSelectedFile(file); if (!/\.(csv|xlsx)$/i.test(file.name)) { setUpload('Unsupported file type', 'Please upload a CSV or XLSX file.'); return validationFailure({ code: 'UNSUPPORTED_FILE_TYPE', message: 'Only CSV and XLSX files are supported.' }); } if (file.size > 10 * 1024 * 1024) { setUpload('File is too large', 'Maximum supported size: 10 MB. Please choose a smaller file.'); return validationFailure({ code: 'FILE_TOO_LARGE', message: 'The uploaded file is larger than the 10 MB file limit.' }); } state.validating = true; setWorkflowStep(1, [0]); setSelectedFile(file, 'uploading'); setUploadLocked(null); setUpload('Uploading file…', 'Your file is being sent securely for validation.'); await new Promise((resolve) => requestAnimationFrame(resolve)); setSelectedFile(file, 'validating'); setUpload('Checking your file…', 'Checking file structure, columns, and rows.'); validationLoading(); setUploadValidationLoading(true); try { const response = await fetch('/api/uploads/validate', { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-file-name': file.name, 'x-template-type': state.selectedReportType, 'x-report-request-id': crypto.randomUUID() }, body: file }); const result = await response.json().catch(() => ({})); if (!response.ok) { if (result.code === 'ACTIVE_REPORT_PROCESS') { if (result.process.status === 'review_required') { if (!hasReviewSnapshot(result.process)) return restorationFailed("Couldn't restore your report."); if (!state.configLoaded) { try { await refreshConfig(); } catch (error) { return restorationFailed("Couldn't restore your report."); } } } applyProcess(result.process); setUploadLocked(result.process); return result.process.status === 'review_required' ? renderReview(result.process) : renderProcessing(result.process); } setSelectedFile(file); return validationFailure(result); } applyProcess(result.process); setSelectedFile(file, 'success'); setUpload('File validated successfully', `${file.name} is valid. Preparing the report review workflow.`); renderValidation(); setUploadValidationLoading(false); } catch (error) { setUploadValidationLoading(false); setSelectedFile(file); validationFailure({ code: 'SERVER_ERROR', message: 'We could not validate the file because the server did not respond. Please try again.' }); } finally { setUploadValidationLoading(false); state.validating = false; if (!state.processId) setUploadLocked(null); } }
 function renderCurrentProcessStage(stage, detail = '') { const label = document.querySelector('[data-process-stage-label]'); const detailElement = document.querySelector('[data-process-stage-detail]'); if (label) label.textContent = stage || 'Processing…'; if (detailElement) detailElement.textContent = detail || 'Please wait while your report is being prepared.'; }
 function setProcessCancelLoading(isLoading) { const button = document.querySelector('[data-action="cancel-process"]'); if (!button) return; button.disabled = isLoading; button.setAttribute('aria-busy', String(isLoading)); if (isLoading) { button.dataset.originalText = button.textContent; button.textContent = 'Cancelling…'; } else if (button.dataset.originalText) button.textContent = button.dataset.originalText; }
-function renderProcessing(process) { const stageKeys = { preparing_data: 'checking', checking_status_mappings: 'mapping', mapping_statuses: 'mapping', checking_products: 'processing', ai_product_classification: 'classifying', preparing_review: 'mapping', finalizing_report: 'finalizing', finalizing: 'finalizing' }; const stage = PROCESS_STAGES.find((item) => item.key === stageKeys[process.stage]) || PROCESS_STAGES[1]; const detail = 'You can safely refresh this page while the server continues processing.'; const target = notice(stage.label, detail); target.classList.add('current-process-status'); const currentStage = $('[data-process-current-stage]'); if (currentStage) currentStage.hidden = false; renderCurrentProcessStage(stage.label, detail); const summary = process.summary || {}; target.append(el('p', `Orders: ${(summary.uniqueOrders || 0).toLocaleString()} · Products: ${(summary.detectedProducts || 0).toLocaleString()}`)); const cancel = el('button', 'Cancel Job', 'button button-danger'); cancel.type = 'button'; cancel.dataset.action = 'cancel-process'; cancel.hidden = !ACTIVE_PROCESS_STATUSES.has(process.status || 'processing'); cancel.addEventListener('click', openCancelProcessModal); target.append(cancel); setProcessCancelLoading(state.cancelling); }
-function resetCancelledProcess() { state.cancelling = false; sessionStorage.removeItem('deliveryiq-process-id'); state.processId = null; state.result = null; state.upload = null; statusMappingState.selected.clear(); productReviewState.selected.clear(); state.productErrors.clear(); $('#file-upload').value = ''; setSelectedFile(null); state.selectedReportType = null; renderReportTypeSelection(); setUploadLocked(null); clearNotice(); }
+function renderProcessing(process) {
+  clearNotice();
+  setUploadValidationLoading(false);
+
+  const stageKeys = {
+    preparing_data: 'checking',
+    checking_status_mappings: 'mapping',
+    mapping_statuses: 'mapping',
+    checking_products: 'processing',
+    ai_product_classification: 'classifying',
+    preparing_review: 'mapping',
+    finalizing_report: 'finalizing',
+    finalizing: 'finalizing'
+  };
+  const stage = PROCESS_STAGES.find((item) => item.key === stageKeys[process.stage]) || PROCESS_STAGES[1];
+  const detail = 'You can safely refresh this page while the server continues processing.';
+  const currentStage = document.querySelector('[data-process-current-stage]');
+
+  if (currentStage) {
+    currentStage.hidden = false;
+    currentStage.classList.add('is-visible');
+  }
+
+  renderCurrentProcessStage(stage.label, detail);
+
+  const summary = process.summary || {};
+  let summaryNode = currentStage?.querySelector('[data-process-summary]');
+  if (!summaryNode && currentStage) {
+    summaryNode = el('p', '', 'process-stage-summary');
+    summaryNode.dataset.processSummary = 'true';
+    currentStage.querySelector('div > div')?.append(summaryNode);
+  }
+  if (summaryNode) summaryNode.textContent = `Orders: ${(summary.uniqueOrders || 0).toLocaleString()} · Products: ${(summary.detectedProducts || 0).toLocaleString()}`;
+
+  let cancel = currentStage?.querySelector('[data-action="cancel-process"]');
+  if (!cancel && currentStage) {
+    cancel = el('button', 'Cancel Job', 'button button-danger');
+    cancel.type = 'button';
+    cancel.dataset.action = 'cancel-process';
+    cancel.addEventListener('click', openCancelProcessModal);
+    currentStage.querySelector('div > div')?.append(cancel);
+  }
+  if (cancel) cancel.hidden = !ACTIVE_PROCESS_STATUSES.has(process.status || 'processing');
+  setProcessCancelLoading(state.cancelling);
+}
+
+function resetCancelledProcess() { state.cancelling = false; sessionStorage.removeItem('deliveryiq-process-id'); state.processId = null; state.result = null; state.upload = null; statusMappingState.selected.clear(); productReviewState.selected.clear(); state.productErrors.clear(); $('#file-upload').value = ''; setSelectedFile(null); state.selectedReportType = null; resetUploadTransientUI(); clearNotice(); renderReportTypeSelection(); setUploadLocked(null); setUpload('Choose a report type to begin', 'Select Simple Report or Full Report, then upload your CSV or XLSX file.'); }
 function openCancelProcessModal() { const content = el('div', undefined, 'app-modal-fields'); const progress = el('p', '', 'app-modal-description'); progress.hidden = true; content.append(el('p', 'The current processing job will be stopped.'), progress); modal({ title: 'Cancel this report?', description: 'The current processing job will be stopped.', destructive: true, content, submitText: 'Cancel Job', cancelText: 'Keep Processing', onSubmit: async ({ setError, submit }) => { state.cancelling = true; renderProcessing({ status: 'processing', stage: state.result?.stage || 'processing_orders', summary: state.result?.summary || {} }); progress.textContent = 'Cancelling report...'; progress.hidden = false; submit.textContent = 'Cancelling report...'; const response = await fetch(`/api/report-processes/${encodeURIComponent(state.processId)}`, { method: 'DELETE' }); const payload = await response.json().catch(() => ({})); if (!response.ok) { state.cancelling = false; setError(payload.message || 'The report could not be cancelled. Please try again.'); submit.textContent = 'Cancel Job'; return true; } resetCancelledProcess(); await restoreActiveProcess(); notice('Report cancelled', 'The server stopped this report. Choose a report type to upload another file.'); return false; } }); }
 function applyProcess(process) { state.selectedReportType = process.templateType; renderReportTypeSelection(); state.result = { summary: process.summary, templateType: process.templateType, classifications: process.classifications, status: process.status, stage: process.stage }; state.processId = process.processId; sessionStorage.setItem('deliveryiq-process-id', state.processId); }
-async function pollProcess() { if (!state.processId) return; try { const response = await fetch(`/api/report-processes/${encodeURIComponent(state.processId)}`); const payload = await response.json(); if (!response.ok || !payload.success) throw new Error(payload.message || 'Process unavailable.'); const process = payload.process; setUploadLocked(ACTIVE_PROCESS_STATUSES.has(process.status) ? process : null); if (process.status === 'review_required') { if (!hasReviewSnapshot(process)) return restorationFailed("Couldn't restore your report."); applyProcess(process); return renderReview(); } if (process.status === 'cancelled') { resetCancelledProcess(); return notice('Report cancelled', 'The server stopped this report. Choose a report type to upload another file.'); } if (process.status === 'completed') { sessionStorage.removeItem('deliveryiq-process-id'); state.processId = null; return renderCompletion(process.report); } if (process.status === 'failed') { const target = notice(process.error || 'Report generation could not be completed.', 'Please retry this report process.', true); const retry = el('button', 'Retry', 'button button-primary'); retry.addEventListener('click', startProcessing); return target.append(retry); } renderProcessing(process); if (state.pollTimer) clearTimeout(state.pollTimer); state.pollTimer = setTimeout(() => { state.pollTimer = null; pollProcess(); }, PROCESS_POLL_INTERVAL); } catch (error) { restorationFailed("Couldn't restore your report."); } }
-function restoreActiveProcess() { if (state.restorePromise) return state.restorePromise; const restore = (async () => { state.restoring = true; showRestoring(); try { const response = await fetch('/api/report-processes/active'); const payload = await response.json(); if (!response.ok || !payload.success) throw new Error(payload.message || 'Active process lookup failed.'); const process = payload.process; if (process?.status === 'review_required' && !hasReviewSnapshot(process)) throw new Error('REVIEW_RESTORE_FAILED'); if (process?.status === 'review_required' && !state.configLoaded) { try { await refreshConfig(); } catch (error) { throw new Error('REVIEW_RESTORE_FAILED'); } } state.restoring = false; document.body.classList.remove('upload-restoring'); hideRestoreModal(); if (!process) { state.processId = null; state.result = null; state.selectedReportType = null; sessionStorage.removeItem('deliveryiq-process-id'); renderReportTypeSelection(); setUploadLocked(null); clearNotice(); return; } applyProcess(process); setUploadLocked(process); if (process.status === 'review_required') return renderReview(); if (process.status === 'failed') { const target = notice(process.error || 'Report generation could not be completed.', 'Please retry this report process.', true); const retry = el('button', 'Retry', 'button button-primary'); retry.type = 'button'; retry.addEventListener('click', startProcessing); return target.append(retry); } if (process.status === 'queued' || process.status === 'processing' || process.status === 'finalizing') { renderProcessing(process); return pollProcess(); } } catch (error) { state.restoring = false; document.body.classList.remove('upload-restoring'); hideRestoreModal(); setUploadLocked(null); restorationFailed(error.message === 'REVIEW_RESTORE_FAILED' ? "Couldn't restore your report." : "Couldn't check your current report."); } })(); state.restorePromise = restore; return restore.finally(() => { if (state.restorePromise === restore) state.restorePromise = null; }); }
+async function pollProcess() { if (!state.processId) return; try { const response = await fetch(`/api/report-processes/${encodeURIComponent(state.processId)}`); const payload = await response.json(); if (!response.ok || !payload.success) throw new Error(payload.message || 'Process unavailable.'); const process = payload.process; setUploadLocked(ACTIVE_PROCESS_STATUSES.has(process.status) ? process : null); if (process.status === 'review_required') { if (!hasReviewSnapshot(process)) return restorationFailed("Couldn't restore your report."); applyProcess(process); return renderReview(); } if (process.status === 'cancelled') { resetCancelledProcess(); return notice('Report cancelled', 'The server stopped this report. Choose a report type to upload another file.'); } if (process.status === 'completed') { sessionStorage.removeItem('deliveryiq-process-id'); state.processId = null; state.result = null; resetUploadTransientUI(); setUploadLocked(null); setUpload('Report generated successfully', 'Your report is ready to view or check in Universal Report.'); return renderCompletion(process.report); } if (process.status === 'failed') { const target = notice(process.error || 'Report generation could not be completed.', 'Please retry this report process.', true); const retry = el('button', 'Retry', 'button button-primary'); retry.addEventListener('click', startProcessing); return target.append(retry); } renderProcessing(process); if (state.pollTimer) clearTimeout(state.pollTimer); state.pollTimer = setTimeout(() => { state.pollTimer = null; pollProcess(); }, PROCESS_POLL_INTERVAL); } catch (error) { restorationFailed("Couldn't restore your report."); } }
+function restoreActiveProcess() { if (state.restorePromise) return state.restorePromise; const restore = (async () => { state.restoring = true; showRestoring(); try { const response = await fetch('/api/report-processes/active'); const payload = await response.json(); if (!response.ok || !payload.success) throw new Error(payload.message || 'Active process lookup failed.'); const process = payload.process; if (process?.status === 'review_required' && !hasReviewSnapshot(process)) throw new Error('REVIEW_RESTORE_FAILED'); if (process?.status === 'review_required' && !state.configLoaded) { try { await refreshConfig(); } catch (error) { throw new Error('REVIEW_RESTORE_FAILED'); } } state.restoring = false; document.body.classList.remove('upload-restoring'); hideRestoreModal(); if (!process) { state.processId = null; state.result = null; state.selectedReportType = null; sessionStorage.removeItem('deliveryiq-process-id'); resetUploadTransientUI(); clearNotice(); renderReportTypeSelection(); setUploadLocked(null); setUpload('Choose a report type to begin', 'Select Simple Report or Full Report, then upload your CSV or XLSX file.'); return; } applyProcess(process); setUploadLocked(process); if (process.status === 'review_required') return renderReview(); if (process.status === 'failed') { const target = notice(process.error || 'Report generation could not be completed.', 'Please retry this report process.', true); const retry = el('button', 'Retry', 'button button-primary'); retry.type = 'button'; retry.addEventListener('click', startProcessing); return target.append(retry); } if (process.status === 'queued' || process.status === 'processing' || process.status === 'finalizing') { renderProcessing(process); return pollProcess(); } } catch (error) { state.restoring = false; document.body.classList.remove('upload-restoring'); hideRestoreModal(); setUploadLocked(null); restorationFailed(error.message === 'REVIEW_RESTORE_FAILED' ? "Couldn't restore your report." : "Couldn't check your current report."); } })(); state.restorePromise = restore; return restore.finally(() => { if (state.restorePromise === restore) state.restorePromise = null; }); }
 async function startProcessing() { const target = notice('Starting report generation', 'Preparing your server-side processing workflow.'); const response = await fetch(`/api/report-processes/${encodeURIComponent(state.processId)}/start`, { method: 'POST' }); const payload = await response.json(); if (!response.ok) return notice('Report generation could not be completed.', payload.message || 'Please retry.', true); renderProcessing(payload.process); if (state.pollTimer) clearTimeout(state.pollTimer); state.pollTimer = setTimeout(() => { state.pollTimer = null; pollProcess(); }, PROCESS_POLL_INTERVAL); }
 async function ensureTaxonomy(masterCategory, productCategory) { let master = state.config.masterCategories.find((x) => x.name === masterCategory); if (!master) { const r = await fetch('/api/master-categories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: masterCategory }) }); const p = await r.json(); if (!r.ok) throw new Error(p.message); master = p.category; } let product = state.config.productCategories.find((x) => x.name === productCategory && x.masterCategory === master.name); if (!product) { const r = await fetch('/api/product-categories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: productCategory, masterCategoryId: master._id }) }); const p = await r.json(); if (!r.ok) throw new Error(p.message); product = p.category; } await refreshConfig(); return { masterCategory: master.name, productCategory: product.name }; }
 async function saveReviewDecision(kind, item, body) { const response = await fetch(`/api/report-processes/${encodeURIComponent(state.processId)}/review/${kind}/${encodeURIComponent(item.value)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); const payload = await response.json(); if (!response.ok) throw new Error(payload.message || 'The review decision could not be saved.'); applyProcess(payload.process); return payload.process; }
@@ -195,7 +252,7 @@ function renderReview() {
   updateProductBulkButton(); updateStatusBulkButton();
 }
 function renderCompletion(report) { setWorkflowStep(4, [0, 1, 2, 3]); ['#status-review', '#product-review', '#final-review', '#review-summary', '[data-process-current-stage]'].forEach((selector) => { const node = $(selector); if (node) node.hidden = true; }); const synchronized = report?.syncStatus === 'completed'; const message = synchronized ? 'Universal Report has been updated.' : report?.syncStatus === 'failed' ? 'Universal Report synchronization needs attention.' : 'Your report is ready to view.'; const target = notice('✓ Report generated successfully', message); target.classList.remove('is-error'); const actions = $('[data-report-complete-actions]'); const messageElement = $('[data-report-complete-message]'); if (actions) actions.hidden = false; if (messageElement) messageElement.textContent = message; const view = $('[data-action="view-report"]'); const universal = $('[data-action="view-universal-report"]'); if (view) view.onclick = async () => { history.pushState({}, '', '/reports'); page('reports'); await loadReports(); if (report?.reportId) viewReport(report.reportId); }; if (universal) { universal.title = 'Open Universal Report'; universal.onclick = () => { history.pushState({}, '', '/universal'); page('universal'); }; } }
-async function generateReport() { if (state.generating || !state.processId) return; state.generating = true; renderReview(); try { const response = await fetch(`/api/report-processes/${encodeURIComponent(state.processId)}/finalize`, { method: 'POST' }); const result = await response.json(); if (!response.ok) { reviewFeedback(result.message || 'Report could not be generated. Please try again.'); return renderReview(); } sessionStorage.removeItem('deliveryiq-process-id'); state.processId = null; state.result = null; setUploadLocked(null); setUpload('Report generated successfully', 'Your report is ready to view or check in Universal Report.'); renderCompletion(result.report); } catch (error) { reviewFeedback('Report could not be generated. Please try again.'); renderReview(); } finally { state.generating = false; } }
+async function generateReport() { if (state.generating || !state.processId) return; state.generating = true; renderReview(); try { const response = await fetch(`/api/report-processes/${encodeURIComponent(state.processId)}/finalize`, { method: 'POST' }); const result = await response.json(); if (!response.ok) { reviewFeedback(result.message || 'Report could not be generated. Please try again.'); return renderReview(); } sessionStorage.removeItem('deliveryiq-process-id'); state.processId = null; state.result = null; resetUploadTransientUI(); setUploadLocked(null); setUpload('Report generated successfully', 'Your report is ready to view or check in Universal Report.'); renderCompletion(result.report); } catch (error) { reviewFeedback('Report could not be generated. Please try again.'); renderReview(); } finally { state.generating = false; } }
 
 function reportCard(report) { const card = el('article', undefined, 'report-card'); const text = el('div'); text.append(el('h2', report.reportName), el('p', `${report.templateType === 'full' ? 'Full' : 'Simple'} · ${report.uniqueOrderCount} unique orders · ${report.dateRange.from || 'No date'} to ${report.dateRange.to || 'No date'}`), el('p', `Status: ${report.reportStatus || 'completed'} · Delivered ${report.analytics.statusDistribution.percentages.Delivered}% · NDR ${report.analytics.statusDistribution.percentages.NDR}% · RTO ${report.analytics.statusDistribution.percentages.RTO}%`)); const actions = el('div'); const view = el('button', 'View', 'button button-secondary'); view.addEventListener('click', () => viewReport(report.reportId)); const download = el('a', 'Download CSV', 'button button-secondary'); download.href = `/api/reports/${encodeURIComponent(report.reportId)}?export=csv`; actions.append(view, download); card.append(text, actions); return card; }
 async function loadReports() { const payload = await fetch('/api/reports').then((r) => r.json()); for (const selector of ['#reports-list', '#history-list']) { const target = $(selector); if (!target) continue; clear(target); if (!payload.reports.length) target.append(el('p', 'No reports yet. Upload your first report to see delivery intelligence.')); else payload.reports.forEach((report) => target.append(reportCard(report))); } }
@@ -232,9 +289,106 @@ function rangeLabel(range) { return (range?.fromDate || range?.from) && (range?.
 function triggerRangeLabel(range) { return (range?.fromDate || range?.from) && (range?.toDate || range?.to) ? `${universalFormatDate(range.fromDate || range.from, true)} — ${universalFormatDate(range.toDate || range.to, true)}` : 'Select date range'; }
 function renderAppliedDateRange() { const range = state.universal.appliedDateRange; $('#universal-date-trigger-label').textContent = triggerRangeLabel(range); updateReportDateSummary(); }
 function renderUniversalChips() { const target = $('#universal-filter-chips'); clear(target); const filters = state.universal.filters; [['paymentMode', filters.paymentMode]].filter(([, value]) => value).forEach(([name, value]) => { const chip = el('button', `${value} ×`, 'universal-filter-chip'); chip.type = 'button'; chip.setAttribute('aria-label', `Remove ${value} filter`); chip.onclick = () => { $('#universal-payment-mode').value = ''; updateUniversalFilter(name, ''); }; target.append(chip); }); }
-async function loadUniversal() { const target = $('#universal-orders-content'); if (!target) return; const requestId = ++universalReportRequestId; if (state.universal.controller) state.universal.controller.abort(); const controller = new AbortController(); state.universal.controller = controller; state.universal.isLoading = true; universalSkeleton(target); universalSkeleton($('#universal-summary'), true); $('#universal-result-summary').textContent = 'Updating report…'; try { const report = (await universalFetch(`/api/universal/grouped?${universalParams()}`, { signal: controller.signal })).report; if (requestId !== universalReportRequestId || state.universal.controller !== controller) return; state.universal.report = report; universalCards(report.totals); universalTable(report); $('#universal-orders-title').textContent = `${report.groupLabel} Wise Performance`; $('#universal-result-summary').textContent = `${universalFormatNumber(report.rows?.length || 0)} ${report.groupLabel.toLowerCase()}${report.rows?.length === 1 ? '' : 's'}`; renderAppliedDateRange(); renderUniversalChips(); updateReportDateSummary(); } catch (error) { if (error.name === 'AbortError' || requestId !== universalReportRequestId) return; clear($('#universal-summary')); clear(target); const box = el('section', undefined, 'universal-empty universal-error'); box.append(el('h3', 'Unable to load report'), el('p', 'Please try again.')); const retry = el('button', 'Retry', 'button button-primary'); retry.type = 'button'; retry.onclick = loadUniversal; box.append(retry); target.append(box); $('#universal-result-summary').textContent = ''; } finally { if (requestId === universalReportRequestId && state.universal.controller === controller) { state.universal.isLoading = false; state.universal.controller = null; } } }
+function renderUniversalEmptyState() {
+  const summary = $('#universal-summary');
+  const target = $('#universal-orders-content');
+  if (summary) clear(summary);
+  if (!target) return;
+  clear(target);
+
+  const box = el('section', undefined, 'universal-empty universal-empty-premium');
+  const icon = el('div', '▥', 'universal-empty-icon');
+  icon.setAttribute('aria-hidden', 'true');
+  box.append(icon, el('p', 'READY WHEN YOU ARE', 'eyebrow'), el('h3', 'No delivery report yet'), el('p', 'Upload your first delivery report to unlock product, category, courier and status performance insights here.'));
+  const upload = el('a', 'Upload delivery data', 'button button-primary');
+  upload.href = '/upload';
+  box.append(upload);
+  target.append(box);
+  $('#universal-orders-title').textContent = 'Your delivery performance';
+  $('#universal-result-summary').textContent = 'No report data available yet';
+}
+
+function renderUniversalLoadingState() {
+  const target = $('#universal-orders-content');
+  if (!target) return;
+  clear(target);
+  const box = el('section', undefined, 'universal-loading-state');
+  const spinner = el('span', '', 'universal-loading-spinner');
+  spinner.setAttribute('aria-hidden', 'true');
+  box.append(spinner, el('strong', 'Loading your report'), el('p', 'Preparing the latest delivery insights…'));
+  target.append(box);
+  $('#universal-result-summary').textContent = 'Loading report…';
+}
+
+function renderUniversalCachedReport() {
+  const report = state.universal.report;
+  if (!report) return false;
+  universalCards(report.totals || {});
+  universalTable(report);
+  $('#universal-orders-title').textContent = `${report.groupLabel || 'Product'} Wise Performance`;
+  $('#universal-result-summary').textContent = `${universalFormatNumber(report.rows?.length || 0)} ${(report.groupLabel || 'Product').toLowerCase()}${report.rows?.length === 1 ? '' : 's'}`;
+  renderAppliedDateRange();
+  renderUniversalChips();
+  updateReportDateSummary();
+  return true;
+}
+
+async function loadUniversal({ preserveExisting = true } = {}) {
+  const target = $('#universal-orders-content');
+  if (!target) return;
+
+  const requestId = ++universalReportRequestId;
+  if (state.universal.controller) state.universal.controller.abort();
+  const controller = new AbortController();
+  state.universal.controller = controller;
+  state.universal.isLoading = true;
+
+  const hasExisting = Boolean(state.universal.report);
+  if (!hasExisting || !preserveExisting) {
+    renderUniversalLoadingState();
+  } else {
+    $('#universal-result-summary').textContent = 'Updating report…';
+    target.setAttribute('aria-busy', 'true');
+  }
+
+  try {
+    const report = (await universalFetch(`/api/universal/grouped?${universalParams()}`, { signal: controller.signal })).report;
+    if (requestId !== universalReportRequestId || state.universal.controller !== controller) return;
+
+    state.universal.report = report || null;
+
+    if (!report || !Array.isArray(report.rows) || report.rows.length === 0) {
+      renderUniversalEmptyState();
+    } else {
+      renderUniversalCachedReport();
+    }
+  } catch (error) {
+    if (error.name === 'AbortError' || requestId !== universalReportRequestId) return;
+    if (!hasExisting) {
+      clear($('#universal-summary'));
+      clear(target);
+      const box = el('section', undefined, 'universal-empty universal-error');
+      box.append(el('h3', 'Unable to load report'), el('p', 'Please try again.'));
+      const retry = el('button', 'Retry', 'button button-primary');
+      retry.type = 'button';
+      retry.onclick = () => loadUniversal({ preserveExisting: false });
+      box.append(retry);
+      target.append(box);
+      $('#universal-result-summary').textContent = '';
+    } else {
+      $('#universal-result-summary').textContent = 'Could not refresh. Showing the latest available report.';
+    }
+  } finally {
+    if (requestId === universalReportRequestId && state.universal.controller === controller) {
+      state.universal.isLoading = false;
+      state.universal.controller = null;
+      target.removeAttribute('aria-busy');
+    }
+  }
+}
+
 async function universalExport(kind) { const status = $('#universal-export-status'); status.textContent = 'Preparing report…'; const [exportType, format] = kind.split('-'); try { const response = await fetch(`/api/universal/export?${universalParams({ exportType, format })}`); if (!response.ok) { const payload = await response.json().catch(() => ({})); throw new Error(payload.message || 'Export could not be completed.'); } const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `deliveryiq-${exportType}-report.${format}`; document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url); status.textContent = 'Download ready.'; } catch (error) { status.textContent = error.message || 'Export could not be completed.'; } }
-function universalResetForNavigation() { const form = $('#universal-filters'); if (!form) return; state.universal.analyzeBy = 'product'; universalReportFilters.analysisBy = 'product'; form.elements.analyzeBy.value = 'product'; setActive('[data-analyze]', 'product', 'analyze'); }
+function universalResetForNavigation() { const form = $('#universal-filters'); if (!form) return; state.universal.analyzeBy = 'product'; universalReportFilters.analysisBy = 'product'; form.elements.analyzeBy.value = 'product'; setActive('[data-analyze]', 'product', 'analyze'); renderAppliedDateRange(); renderUniversalChips(); }
 function universalClearFilters() { const form = $('#universal-filters'); state.universal.filters = { paymentMode: null }; state.universal.appliedDateRange = { fromDate: '', toDate: '' }; Object.assign(universalReportFilters, { analysisBy: 'product', paymentMode: null, dateFrom: null, dateTo: null }); form.reset(); universalResetForNavigation(); $('#universal-payment-mode').value = ''; renderAppliedDateRange(); renderUniversalChips(); loadUniversal(); }
 (function setupUniversalReport() {
   const form = $('#universal-filters'); if (!form) return;
