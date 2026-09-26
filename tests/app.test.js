@@ -41,6 +41,7 @@ test('upload validation returns safe, structured details for supported templates
   for (const templateType of ['simple', 'full']) for (const [extension, buffer] of [['csv', Buffer.from(csvTemplate(templateType))], ['xlsx', xlsxTemplate(templateType)]]) { const result = validateUpload({ originalname: `orders.${extension}`, buffer }, { templateType, classify: false }); assert.equal(result.success, true, `${templateType} ${extension}`); }
   const missing = validateUpload({ originalname: 'missing.csv', buffer: Buffer.from('Order ID,Status\n1,Delivered\n') }, { templateType: 'simple', classify: false }); assert.equal(missing.code, 'MISSING_REQUIRED_COLUMNS'); assert.deepEqual(missing.details.missingColumns, ['Order Date', 'Product Name', 'Payment Mode']);
   const invalid = validateUpload({ originalname: 'invalid.csv', buffer: Buffer.from('Order ID,Order Date,Order Status,Product Name,Payment Mode\n,not-a-date,Delivered,Widget,COD\n') }, { templateType: 'simple', classify: false }); assert.equal(invalid.code, 'INVALID_ROWS'); assert.equal(invalid.details.errorCount, 3); assert.ok(invalid.details.errors.every((item) => item.row === 2 && item.column && item.type));
+  const wrongTemplate = validateUpload({ originalname: 'wrong-template.csv', buffer: Buffer.from(csvTemplate('full')) }, { templateType: 'simple', classify: false }); assert.equal(wrongTemplate.code, 'UNKNOWN_COLUMNS'); assert.deepEqual(wrongTemplate.details.unknownColumns, ['Product Qty', 'Product Price', 'Courier', 'Source/Website/Store']);
   assert.equal(validateUpload({ originalname: 'empty.csv', buffer: Buffer.alloc(0) }, { templateType: 'simple' }).code, 'EMPTY_FILE');
   assert.equal(validateUpload({ originalname: 'orders.pdf', buffer: Buffer.from('file') }, { templateType: 'simple' }).code, 'UNSUPPORTED_FILE_TYPE');
 });
@@ -310,6 +311,9 @@ test('Upload Data starts with report selection and scopes templates to the chose
   assert.match(script, /function renderSelectedTemplates\(type\)/);
   assert.match(script, /clear\(actions\)/);
   assert.match(script, /Changing the report type will clear the current selected file\. Continue\?/);
+  assert.match(script, /function renderProcessing\(process\)/);
+  assert.match(script, /current-process-status/);
+  assert.doesNotMatch(script, /const list = el\('ol', undefined, 'workflow-stepper'\); stages\.forEach/);
 });
 
 test('Report review bulk updates are server-authoritative and completion directs users to both reports', () => {
