@@ -65,37 +65,83 @@
 </div></div><button id="universal-refresh" class="button button-secondary" type="button">Refresh</button></div></div>
           <!-- Legacy compatibility labels: Category Status · data-payment="COD" · Summary Report. -->
           <form id="universal-filters" class="universal-report-controls" aria-label="Universal Report controls">
-  <input name="analyzeBy" value="product" type="hidden">
-  <input name="paymentMode" value="" type="hidden">
-  <input name="fromDate" value="" type="hidden">
-  <input name="toDate" value="" type="hidden">
-  <input name="categoryStatus" value="" type="hidden">
-  <section class="universal-analysis-section" aria-labelledby="universal-analysis-label">
-    <div class="universal-control-heading"><div><span id="universal-analysis-label" class="control-label">Analyze by</span><p class="control-help">Choose how the report should be grouped.</p></div></div>
-    <div class="segmented-control universal-analysis-control" role="group" aria-label="Analyze by">
-      <button type="button" data-analyze="product" aria-pressed="true" class="is-active">Analyze by Product</button>
-      <button type="button" data-analyze="product_category" aria-pressed="false">Product Category</button>
-      <button type="button" data-analyze="courier" aria-pressed="false">Courier</button>
-    </div>
-  </section>
-  <section class="universal-secondary-filters" aria-labelledby="universal-filter-label">
-    <div class="universal-control-heading"><div><span id="universal-filter-label" class="control-label">Filters</span><p class="control-help">Refine the data shown in the report.</p></div></div>
-    <div class="universal-filter-grid">
-      <div class="universal-filter-field universal-date-control"><span class="universal-field-label">Date range</span>
-        <button id="universal-date-trigger" class="date-trigger" type="button" aria-expanded="false" aria-haspopup="dialog" aria-controls="universal-date-popover"><span class="date-trigger-content"><span class="date-trigger-icon" aria-hidden="true">📅</span><span><small>Date range</small><strong id="universal-date-trigger-label">Select date range</strong></span></span><span class="date-trigger-chevron" aria-hidden="true">⌄</span></button>
-        <section id="universal-date-popover" class="date-popover" role="dialog" aria-modal="false" aria-labelledby="universal-date-picker-title" hidden>
-          <div class="date-popover-heading"><div><span class="date-popover-eyebrow">REPORT FILTER</span><h2 id="universal-date-picker-title">Select date range</h2><p>Choose a preset or select a custom range.</p></div><button id="universal-date-close" class="date-popover-close" type="button" aria-label="Close date range selector">×</button></div>
-          <div class="date-picker-section"><span class="date-picker-section-label">Quick range</span><div class="quick-ranges" role="group" aria-label="Quick date ranges"><button type="button" data-range="today">Today</button><button type="button" data-range="7">Last 7 Days</button><button type="button" data-range="15">Last 15 Days</button><button type="button" data-range="30">Last 30 Days</button><button type="button" data-range="month">This Month</button><button type="button" data-range="custom">Custom</button></div></div>
-          <fieldset class="date-custom"><legend>Custom range</legend><label for="universal-from-date"><span>From</span><input id="universal-from-date" type="date"></label><span class="date-range-arrow" aria-hidden="true">→</span><label for="universal-to-date"><span>To</span><input id="universal-to-date" type="date"></label></fieldset>
-          <p id="universal-date-error" class="date-error" role="alert" hidden></p>
-          <div class="date-actions"><button id="universal-date-clear" type="button" class="button button-secondary">Clear</button><button id="universal-date-cancel" type="button" class="button button-secondary">Cancel</button><button id="universal-date-apply" type="button" class="button button-primary">Apply date range</button></div>
-        </section>
-      </div>
-      <div class="universal-filter-field"><span class="universal-field-label">Payment mode</span><div id="universal-payment-modes" class="segmented-control payment-control" role="group" aria-label="Payment mode"><button type="button" data-payment="" aria-pressed="true" class="is-active">All</button><button type="button" data-payment="cod" aria-pressed="false">COD</button><button type="button" data-payment="prepaid" aria-pressed="false">Prepaid</button></div></div>
-      <div class="universal-filter-field"><label class="universal-field-label" for="universal-category-status">Category status</label><select id="universal-category-status" class="universal-secondary-select" aria-label="Category status"><option value="">All statuses</option><option value="Delivered">Delivered</option><option value="In Transit">In Transit</option><option value="NDR">NDR</option><option value="RTO">RTO</option><option value="Cancelled">Cancelled</option><option value="Other">Other</option></select></div>
-    </div>
-  </section>
-</form><div id="universal-summary" class="universal-summary" aria-live="polite"></div>
+            <input name="analyzeBy" value="product" type="hidden">
+            <input name="paymentMode" value="" type="hidden">
+            <input name="fromDate" value="" type="hidden">
+            <input name="toDate" value="" type="hidden">
+            <input name="categoryStatus" value="" type="hidden">
+            <section class="universal-analysis-section" aria-labelledby="universal-analysis-label">
+              <div class="universal-control-heading">
+                <div>
+                  <span id="universal-analysis-label" class="control-label">Analyze by</span>
+                  <p class="control-help">Choose how the report should be grouped.</p>
+                </div>
+              </div>
+              <div class="segmented-control universal-analysis-control" role="group" aria-label="Analyze by">
+                <button type="button" data-analyze="product" aria-pressed="true" class="is-active">Analyze by Product</button>
+                <button type="button" data-analyze="product_category" aria-pressed="false">Product Category</button>
+                <button type="button" data-analyze="courier" aria-pressed="false">Courier</button>
+              </div>
+            </section>
+            <section class="universal-secondary-filters" aria-labelledby="universal-filter-label">
+              <div class="universal-control-heading">
+                <div>
+                  <span id="universal-filter-label" class="control-label">Filters</span>
+                  <p class="control-help">Refine the data shown in the report.</p>
+                </div>
+              </div>
+              <div class="universal-filter-grid">
+                <div class="universal-filter-field universal-date-control">
+                  <span class="universal-field-label">Date range</span>
+                  <button id="universal-date-trigger" class="date-trigger" type="button" aria-expanded="false" aria-haspopup="dialog" aria-controls="universal-date-popover">
+                    <span class="date-trigger-content">
+                      <span class="date-trigger-icon" aria-hidden="true">📅</span>
+                      <span class="date-trigger-text"><small>Date range</small><strong id="universal-date-trigger-label">Select date range</strong></span>
+                    </span>
+                    <span class="date-trigger-chevron" aria-hidden="true">⌄</span>
+                  </button>
+                  <section id="universal-date-popover" class="date-popover" role="dialog" aria-modal="false" aria-labelledby="universal-date-picker-title" hidden>
+                    <div class="date-popover-heading">
+                      <div><span class="date-popover-eyebrow">REPORT FILTER</span><h2 id="universal-date-picker-title">Select date range</h2><p>Choose a preset or select a custom range.</p></div>
+                      <button id="universal-date-close" class="date-popover-close" type="button" aria-label="Close date range selector">×</button>
+                    </div>
+                    <div class="date-picker-section">
+                      <span class="date-picker-section-label">Quick range</span>
+                      <div class="quick-ranges" role="group" aria-label="Quick date ranges">
+                        <button type="button" data-range="today">Today</button><button type="button" data-range="7">Last 7 Days</button><button type="button" data-range="15">Last 15 Days</button><button type="button" data-range="30">Last 30 Days</button><button type="button" data-range="month">This Month</button><button type="button" data-range="custom">Custom</button>
+                      </div>
+                    </div>
+                    <fieldset class="date-custom">
+                      <legend>Custom range</legend>
+                      <label for="universal-from-date"><span>From</span><input id="universal-from-date" type="date"></label>
+                      <span class="date-range-arrow" aria-hidden="true">→</span>
+                      <label for="universal-to-date"><span>To</span><input id="universal-to-date" type="date"></label>
+                    </fieldset>
+                    <p id="universal-date-error" class="date-error" role="alert" hidden></p>
+                    <div class="date-actions">
+                      <button id="universal-date-clear" type="button" class="button button-secondary">Clear</button>
+                      <button id="universal-date-cancel" type="button" class="button button-secondary">Cancel</button>
+                      <button id="universal-date-apply" type="button" class="button button-primary">Apply date range</button>
+                    </div>
+                  </section>
+                </div>
+                <div class="universal-filter-field">
+                  <span class="universal-field-label">Payment mode</span>
+                  <div id="universal-payment-modes" class="segmented-control payment-control" role="group" aria-label="Payment mode">
+                    <button type="button" data-payment="" aria-pressed="true" class="is-active">All</button>
+                    <button type="button" data-payment="cod" aria-pressed="false">COD</button>
+                    <button type="button" data-payment="prepaid" aria-pressed="false">Prepaid</button>
+                  </div>
+                </div>
+                <div class="universal-filter-field">
+                  <label class="universal-field-label" for="universal-category-status">Category status</label>
+                  <select id="universal-category-status" class="universal-secondary-select" aria-label="Category status">
+                    <option value="">All statuses</option><option value="Delivered">Delivered</option><option value="In Transit">In Transit</option><option value="NDR">NDR</option><option value="RTO">RTO</option><option value="Cancelled">Cancelled</option><option value="Other">Other</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+          </form><div id="universal-summary" class="universal-summary" aria-live="polite"></div>
           <section class="universal-orders" aria-labelledby="universal-orders-title"><div class="section-heading"><div><p class="eyebrow">GROUPED REPORT</p><h2 id="universal-orders-title">Product Wise Report</h2></div><p id="universal-result-summary">Loading report…</p></div><p id="universal-export-status" class="universal-export-status" aria-live="polite"></p><div id="universal-orders-content" aria-live="polite"></div><nav id="universal-pagination" class="universal-pagination" hidden></nav></section>
         </section>
         <section class="app-page page" data-page-panel="products" aria-labelledby="products-title" hidden><p class="eyebrow">PRODUCT MAPPING</p><h1 id="products-title">Manage master and product categories.</h1><form id="category-form" class="mapping-toolbar"><label>Master category <input name="masterCategory" maxlength="80" required placeholder="e.g. Beauty & Personal Care"></label><label>Product category <input name="name" maxlength="80" required placeholder="e.g. Nail Serum"></label><button class="button button-primary">Create product category</button></form><div id="category-list" class="category-list"></div><div class="mapping-toolbar"><label>Search product <input id="product-search" placeholder="Search product"></label><label>Category <select id="product-category-filter"><option value="">All categories</option></select></label></div><p class="management-headings">Product · Category · Source · Last updated · Actions</p><div id="product-mappings" class="management-list" aria-live="polite"></div></section>
