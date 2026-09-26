@@ -251,5 +251,21 @@ class ProcessingStore {
   async complete(job, report) { const latest = await this.get(job.clientId, job.processId); if (!latest || latest.status === 'cancelled') return latest; job.status = 'completed'; job.stage = 'completed'; job.report = report; job.updatedAt = new Date(); if (await this.database()) { const completed = await ReportProcess.findOneAndUpdate({ clientId: job.clientId, processId: job.processId, status: { $ne: 'cancelled' } }, { $set: job }, { new: true }).lean(); return completed || await this.get(job.clientId, job.processId); } this.jobs.set(job.processId, job); return job; }
   async cancel(clientId, processId) { const job = await this.get(clientId, processId); if (!job || !ACTIVE_PROCESS_STATUSES.includes(job.status)) return null; job.status = 'cancelled'; job.stage = 'cancelled'; job.cancelledAt = new Date(); return this.save(job); }
   async updateReview(clientId, processId, kind, value, update) { const job = await this.get(clientId, processId); if (!job || job.status !== 'review_required') return null; const item = job.result?.classifications?.[kind === 'product' ? 'products' : 'statuses']?.find((entry) => entry.value === value); if (!item) return null; Object.assign(item, update); return this.save(job); }
+  async updateReviews(clientId, processId, kind, updates) {
+    const key = kind === 'product' ? 'products' : 'statuses'; const job = await this.get(clientId, processId);
+    if (!job || job.status !== 'review_required') return null;
+    const items = job.result?.classifications?.[key]; if (!Array.isArray(items)) return null; const observedUpdatedAt = job.updatedAt;
+    const byValue = new Map(updates.map((update) => [update.value, update]));
+    if ([...byValue].some(([value]) => !items.some((item) => item.value === value))) return null;
+    items.forEach((item) => { const update = byValue.get(item.value); if (update) Object.assign(item, update); });
+    job.updatedAt = new Date();
+    if (await this.database()) {
+      // Only replace the review array, never the large uploaded input. The timestamp
+      // predicate prevents a stale bulk request from overwriting another review.
+      const result = await ReportProcess.findOneAndUpdate({ clientId, processId, status: 'review_required', updatedAt: observedUpdatedAt }, { $set: { [`result.classifications.${key}`]: items, updatedAt: job.updatedAt } }, { new: true }).lean();
+      return result;
+    }
+    this.jobs.set(processId, job); return job;
+  }
 }
 module.exports = { ReportStore, ProcessingStore, UniversalStore, UniversalOrder, UniversalOrderOccurrence, UniversalSync, aggregate, applyFilters, csv, csvLine, safeCell, universalExportRows, UNIVERSAL_EXPORT_HEADERS, dimensions };
