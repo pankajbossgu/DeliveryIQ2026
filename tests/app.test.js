@@ -55,6 +55,17 @@ test('report process keeps a complete review snapshot and only one active proces
   await store.updateReview('client-a', first.job.processId, 'product', 'A', { status: 'AI Approved', classificationRequired: false, masterCategory: 'Beauty', productCategory: 'Serum' });
   const restored = await store.get('client-a', first.job.processId); assert.equal(restored.result.classifications.products.length, 2); assert.equal(restored.result.classifications.products[0].classificationRequired, false); assert.equal(restored.result.classifications.products[1].classificationRequired, true);
 });
+test('cancelling a processing job prevents late stage updates from restoring it', async () => {
+  const { ProcessingStore } = require('../src/reports'); const store = new ProcessingStore({ mongoUri: null });
+  const input = { summary: { detectedProducts: 1 }, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] };
+  const created = await store.createValidated('client-cancel', input, 'request-cancel');
+  let release; const waiting = new Promise((resolve) => { release = resolve; });
+  const running = store.start('client-cancel', created.job.processId, async (job, stage) => { await stage('mapping_statuses'); await waiting; await stage('finalizing_report'); return { classifications: { statuses: [], products: [] } }; });
+  await new Promise((resolve) => setImmediate(resolve));
+  await store.cancel('client-cancel', created.job.processId); release();
+  const finished = await running; const restored = await store.get('client-cancel', created.job.processId);
+  assert.equal(finished.status, 'cancelled'); assert.equal(restored.status, 'cancelled'); assert.equal(restored.stage, 'cancelled');
+});
 test('CSV preserves actual courier status separately from normalized status category', () => {
   const output = csv([{ orderId: 'ORD001', orderDate: '2026-01-01', originalStatus: 'Out for Delivery', category: 'In Transit', originalProductName: 'Nail Serum', masterCategory: 'Beauty', productCategory: 'Nail Serum', paymentMode: 'COD' }], 'simple');
   assert.match(output, /Actual Status/); assert.match(output, /Status Category/); assert.match(output, /"Out for Delivery","In Transit"/);
@@ -260,6 +271,8 @@ test('Upload Data restoration has dedicated lifecycle states and does not reuse 
   assert.match(script, /Select All/);
   assert.match(script, /Apply to Selected/);
   assert.match(script, /Updating \$\{selected\.length\} status mappings/);
+  assert.match(script, /statusErrors/);
+  assert.match(script, /progress\.textContent = 'Cancelling report\.\.\.'/);
   const server = fs.readFileSync(require('node:path').join(__dirname, '..', 'src', 'app.js'), 'utf8');
   assert.match(server, /function activeProcessUploadMessage\(/);
   assert.ok(server.indexOf('const active = await processingStore.getActiveProcess(clientId);') < server.indexOf('const result = validateUpload'));
