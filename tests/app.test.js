@@ -6,7 +6,7 @@ process.env.SESSION_SECRET = 'test-session-secret-that-is-long-enough';
 const { MappingStore } = require('../src/mappings');
 const { classifyProducts } = require('../src/product');
 const { GeminiProductClassifier, validateGeminiResults, GEMINI_MODEL } = require('../src/product-classifier');
-const { validateUpload, processValidatedUpload } = require('../src/upload');
+const { validateUpload, processValidatedUpload, csvTemplate, xlsxTemplate } = require('../src/upload');
 const { aggregate, applyFilters, csv } = require('../src/reports');
 const { classifyStatus } = require('../src/classification');
 const testSessions = new Map();
@@ -37,6 +37,13 @@ test('approval saves taxonomy/mapping and next upload has zero Gemini calls', as
 test('manual fallback requires both categories and preserves status engine', async () => { const store = new MappingStore({ mongoUri: null }); await assert.rejects(store.saveProductMapping('a', 'Thing', { productCategory: 'Thing' }), { code: 'INVALID_CATEGORY' }); assert.equal(classifyStatus('Ready to Ship').category, 'In Transit'); assert.equal(classifyStatus('RTO NDR').category, 'RTO'); });
 test('reports snapshot, filter, and export both taxonomy levels', () => { const rows = [{ normalizedOrderId: '1', category: 'Delivered', originalProductName: 'S-Famw Nail Serum 349', masterCategory: 'Beauty & Personal Care', productCategory: 'Nail Serum', quantity: 1, rowValue: 349 }]; const report = aggregate(rows, 'full'); assert.equal(report.analytics.masterCategory[0].name, 'Beauty & Personal Care'); assert.equal(applyFilters(rows, { masterCategory: 'Beauty & Personal Care' }, 'full').length, 1); assert.match(csv(rows, 'full'), /Master Category/); });
 test('upload validation never calls Gemini before processing and processing calls it for unknown products', async () => { let calls = 0; const file = { originalname: 'orders.csv', buffer: Buffer.from('Order ID,Order Date,Status,Product Name,Order Quantity,Product Price,Payment Mode,Courier,Order Source\n1,2026-01-01,Delivered,S-Famw Nail Serum 349,1,10,COD,C,Store\n') }; const validated = validateUpload(file, { classify: false }); assert.equal(validated.success, true); const result = await processValidatedUpload(validated, { productClassifier: { classifyProducts(products) { calls += 1; return { results: [{ product: products[0], masterCategory: 'Beauty & Personal Care', productCategory: 'Nail Serum' }] }; } } }); assert.equal(calls, 1); assert.equal(result.classifications.products[0].mappingSource, 'ai-suggested'); });
+test('upload validation returns safe, structured details for supported templates and invalid files', () => {
+  for (const templateType of ['simple', 'full']) for (const [extension, buffer] of [['csv', Buffer.from(csvTemplate(templateType))], ['xlsx', xlsxTemplate(templateType)]]) { const result = validateUpload({ originalname: `orders.${extension}`, buffer }, { templateType, classify: false }); assert.equal(result.success, true, `${templateType} ${extension}`); }
+  const missing = validateUpload({ originalname: 'missing.csv', buffer: Buffer.from('Order ID,Status\n1,Delivered\n') }, { templateType: 'simple', classify: false }); assert.equal(missing.code, 'MISSING_REQUIRED_COLUMNS'); assert.deepEqual(missing.details.missingColumns, ['Order Date', 'Product Name', 'Payment Mode']);
+  const invalid = validateUpload({ originalname: 'invalid.csv', buffer: Buffer.from('Order ID,Order Date,Order Status,Product Name,Payment Mode\n,not-a-date,Delivered,Widget,COD\n') }, { templateType: 'simple', classify: false }); assert.equal(invalid.code, 'INVALID_ROWS'); assert.equal(invalid.details.errorCount, 3); assert.ok(invalid.details.errors.every((item) => item.row === 2 && item.column && item.type));
+  assert.equal(validateUpload({ originalname: 'empty.csv', buffer: Buffer.alloc(0) }, { templateType: 'simple' }).code, 'EMPTY_FILE');
+  assert.equal(validateUpload({ originalname: 'orders.pdf', buffer: Buffer.from('file') }, { templateType: 'simple' }).code, 'UNSUPPORTED_FILE_TYPE');
+});
 test('Gemini uses the hardcoded Flash-Lite model and GEMINI_API_KEY only', () => { const classifier = new GeminiProductClassifier({ apiKey: 'key', model: 'other' }); assert.equal(classifier.model, 'gemini-2.5-flash-lite'); });
 test('report process keeps a complete review snapshot and only one active process', async () => {
   const { ProcessingStore } = require('../src/reports'); const store = new ProcessingStore({ mongoUri: null });
