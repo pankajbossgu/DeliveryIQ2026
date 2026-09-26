@@ -1,5 +1,4 @@
-DeliveryIQ — Updated app.js
-Full updated JavaScript source. Copy the complete code below into public/js/app.js. This document is based on the uploaded app.js and includes the page-isolation/floating-control fixes.
+
 const ACTIVE_PROCESS_STATUSES = new Set(['queued', 'processing', 'review_required', 'finalizing', 'failed']);
 const state = { upload: null, result: null, processId: null, selectedReportType: null, config: { statusCategories: ['Delivered', 'In Transit', 'NDR', 'RTO', 'Cancelled', 'Other'], masterCategories: [], productCategories: [] }, reportId: null, restoring: true, restorePromise: null, validating: false, cancelling: false, configLoaded: false, productErrors: new Map(), productSaving: new Set(), selectedProducts: new Set(), selectedStatuses: new Set(), statusSaving: new Set(), statusBulkSaving: false, statusBulkError: '', statusErrors: new Map(), bulkSaving: false, bulkAction: '', bulkError: '', reviewFeedback: '', generating: false, universal: { page: 1, limit: 25, controller: null, detailCache: new Map(), loading: false } };
 const $ = (selector) => document.querySelector(selector);
