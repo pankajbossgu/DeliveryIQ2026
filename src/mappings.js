@@ -21,7 +21,7 @@ const duplicate = (code) => Object.assign(new Error(code), { code });
 class MappingStore {
   constructor({ mongoUri = process.env.MONGODB_URI } = {}) { this.mongoUri = mongoUri; this.memory = { status: new Map(), product: new Map(), master: new Map(), category: new Map(), suggestion: new Map() }; this.connection = null; }
   async database() { if (!this.mongoUri || this.mongoUri.includes('127.0.0.1:27017/deliveryiq2026') && process.env.NODE_ENV === 'test') return null; if (!this.connection) this.connection = mongoose.connect(this.mongoUri, { serverSelectionTimeoutMS: 1500 }).catch(() => null); return this.connection; }
-  async list(kind, clientId) { const Model = kind === 'status' ? StatusMapping : ProductMapping; if (await this.database()) return Model.find({ clientId }).sort({ updatedAt: -1 }).lean(); return [...(this.memory[kind].get(clientId)?.values() || [])].sort((a, b) => b.updatedAt - a.updatedAt); }
+  async list(kind, clientId, keys) { const Model = kind === 'status' ? StatusMapping : ProductMapping; if (await this.database()) return Model.find({ clientId, ...(keys ? { normalizedValue: { $in: keys } } : {}) }).sort({ updatedAt: -1 }).lean(); const wanted = keys && new Set(keys); return [...(this.memory[kind].get(clientId)?.values() || [])].filter((item) => !wanted || wanted.has(item.normalizedValue)).sort((a, b) => b.updatedAt - a.updatedAt); }
   async listMasters(clientId, inactive = false) { if (await this.database()) return MasterCategory.find({ clientId, ...(inactive ? {} : { active: true }) }).sort({ name: 1 }).lean(); return [...(this.memory.master.get(clientId)?.values() || [])].filter((x) => inactive || x.active).sort((a, b) => a.name.localeCompare(b.name)); }
   async saveMaster(clientId, name, options = {}) { const value = normalizeCategory(name); if (!clientId || !value) throw duplicate('INVALID_MASTER_CATEGORY'); const normalizedName = normalizeMappingValue(value); const record = { clientId, name: value, normalizedName, active: options.active !== false, updatedBy: options.updatedBy || 'client' }; if (await this.database()) { if (await MasterCategory.exists({ clientId, normalizedName })) throw duplicate('MASTER_CATEGORY_EXISTS'); try { return (await MasterCategory.create(record)).toObject(); } catch (e) { if (e.code === 11000) throw duplicate('MASTER_CATEGORY_EXISTS'); throw e; } } const values = this.memory.master.get(clientId) || new Map(); if (values.has(normalizedName)) throw duplicate('MASTER_CATEGORY_EXISTS'); const saved = { ...record, _id: `master-${normalizedName}`, createdAt: new Date(), updatedAt: new Date() }; values.set(normalizedName, saved); this.memory.master.set(clientId, values); return saved; }
   async master(clientId, idOrName) { const name = normalizeMappingValue(idOrName); const all = await this.listMasters(clientId, true); return all.find((x) => String(x._id) === String(idOrName) || x.normalizedName === name) || null; }
@@ -44,11 +44,13 @@ class MappingStore {
   }
   // Review batches deliberately validate the taxonomy once and issue one mapping write.
   // This avoids repeatedly reading the same category documents for every selected row.
-  async saveProductMappings(clientId, products, { productCategory, masterCategory, source, updatedBy } = {}) {
+  async saveProductMappings(clientId, products, { productCategory, masterCategory, source, updatedBy, taxonomy } = {}) {
     const values = [...new Set((products || []).map((value) => String(value || '').trim()).filter(Boolean))];
     if (!values.length) throw duplicate('INVALID_MAPPING');
-    const product = normalizeCategory(productCategory); const master = await this.master(clientId, masterCategory);
-    const category = await this.category(clientId, product, master?._id);
+    taxonomy ||= await this.taxonomySnapshot(clientId);
+    const product = normalizeCategory(productCategory);
+    const master = taxonomy.masters.find((item) => String(item._id) === String(masterCategory) || item.normalizedName === normalizeMappingValue(masterCategory));
+    const category = taxonomy.categories.find((item) => item.normalizedName === normalizeMappingValue(product) && String(item.masterCategoryId) === String(master?._id));
     if (!master || !category) throw duplicate('INVALID_CATEGORY');
     const now = new Date(); const normalized = values.map(normalizeMappingValue);
     const update = (value) => ({ clientId, normalizedValue: normalizeMappingValue(value), originalExample: value, category: category.name, productCategory: category.name, productCategoryId: category._id, masterCategory: master.name, masterCategoryId: master._id, source: source || 'Manual', updatedBy: updatedBy || 'client' });
@@ -71,16 +73,54 @@ class MappingStore {
     const values = [...new Set((products || []).map((value) => String(value || '').trim()).filter(Boolean))]; if (!values.length || !['Client Rejected', 'AI Approved', 'Client Modified', 'Manual'].includes(status)) throw duplicate('INVALID_SUGGESTION');
     const update = { status, finalCategory: details.productCategory || details.finalCategory || null, finalProductCategory: details.productCategory || details.finalCategory || null, finalMasterCategory: details.masterCategory || null, decidedAt: new Date() };
     if (await this.database()) return ProductClassificationSuggestion.updateMany({ clientId, normalizedProductName: { $in: values.map(normalizeMappingValue) } }, { $set: update });
-    (this.memory.suggestion.get(clientId) || []).filter((item) => values.map(normalizeMappingValue).includes(item.normalizedProductName)).forEach((item) => Object.assign(item, update));
+    const normalized = new Set(values.map(normalizeMappingValue));
+    (this.memory.suggestion.get(clientId) || []).filter((item) => normalized.has(item.normalizedProductName)).forEach((item) => Object.assign(item, update));
   }
-  async listCategories(clientId, includeInactive = false) { const masters = await this.listMasters(clientId, true); const byId = new Map(masters.map((m) => [String(m._id), m])); const decorate = (x) => ({ ...x, masterCategory: byId.get(String(x.masterCategoryId))?.name || null }); if (await this.database()) return (await ProductCategory.find({ clientId, ...(includeInactive ? {} : { active: true }) }).sort({ name: 1 }).lean()).map(decorate); return [...(this.memory.category.get(clientId)?.values() || [])].filter((x) => includeInactive || x.active).map(decorate).sort((a, b) => a.name.localeCompare(b.name)); }
+  async listCategories(clientId, includeInactive = false, masters) { masters ||= await this.listMasters(clientId, true); const byId = new Map(masters.map((m) => [String(m._id), m])); const decorate = (x) => ({ ...x, masterCategory: byId.get(String(x.masterCategoryId))?.name || null }); if (await this.database()) return (await ProductCategory.find({ clientId, ...(includeInactive ? {} : { active: true }) }).sort({ name: 1 }).lean()).map(decorate); return [...(this.memory.category.get(clientId)?.values() || [])].filter((x) => includeInactive || x.active).map(decorate).sort((a, b) => a.name.localeCompare(b.name)); }
   async category(clientId, name, masterIdOrName) { const key = normalizeMappingValue(name); const categories = await this.listCategories(clientId, true); return categories.find((x) => x.normalizedName === key && (!masterIdOrName || String(x.masterCategoryId) === String(masterIdOrName) || normalizeMappingValue(x.masterCategory) === normalizeMappingValue(masterIdOrName))) || null; }
   async saveCategory(clientId, name, masterCategory, options = {}) { const value = normalizeCategory(name); const master = await this.master(clientId, masterCategory); if (!value) throw duplicate('INVALID_CATEGORY'); const normalizedName = normalizeMappingValue(value); if (!master) { if (options.requireMaster) throw duplicate('MASTER_CATEGORY_REQUIRED'); const values = this.memory.category.get(clientId) || new Map(); if (values.has(`legacy:${normalizedName}`)) throw duplicate('CATEGORY_EXISTS'); const saved = { clientId, name: value, normalizedName, active: true, _id: `legacy-${normalizedName}`, createdAt: new Date(), updatedAt: new Date() }; values.set(`legacy:${normalizedName}`, saved); this.memory.category.set(clientId, values); return saved; } const record = { clientId, name: value, normalizedName, masterCategoryId: master._id, active: options.active !== false, updatedBy: options.updatedBy || 'client' }; if (await this.database()) { if (await ProductCategory.exists({ clientId, masterCategoryId: master._id, normalizedName })) throw duplicate('CATEGORY_EXISTS'); try { return { ...(await ProductCategory.create(record)).toObject(), masterCategory: master.name }; } catch (e) { if (e.code === 11000) throw duplicate('CATEGORY_EXISTS'); throw e; } } const values = this.memory.category.get(clientId) || new Map(); const key = `${master._id}:${normalizedName}`; if (values.has(key)) throw duplicate('CATEGORY_EXISTS'); const saved = { ...record, _id: `category-${key}`, createdAt: new Date(), updatedAt: new Date(), masterCategory: master.name }; values.set(key, saved); this.memory.category.set(clientId, values); return saved; }
   async remove(kind, clientId, value) { const key = normalizeMappingValue(value); const Model = kind === 'status' ? StatusMapping : ProductMapping; if (await this.database()) return Boolean((await Model.deleteOne({ clientId, normalizedValue: key })).deletedCount); return this.memory[kind].get(clientId)?.delete(key) || false; }
   async setCategoryActive(clientId, name, active, masterCategory) { const category = await this.category(clientId, name, masterCategory); if (!category) return null; if (await this.database()) return ProductCategory.findByIdAndUpdate(category._id, { active: Boolean(active), updatedBy: 'client' }, { new: true }).lean(); category.active = Boolean(active); category.updatedAt = new Date(); return category; }
   async renameCategory(clientId, oldName, name, masterCategory) { const category = await this.category(clientId, oldName, masterCategory); const next = normalizeCategory(name); if (!category) return null; if (!next) throw duplicate('INVALID_CATEGORY'); const existing = await this.category(clientId, next, category.masterCategoryId); if (existing && String(existing._id) !== String(category._id)) throw duplicate('CATEGORY_EXISTS'); if (await this.database()) { await ProductCategory.findByIdAndUpdate(category._id, { name: next, normalizedName: normalizeMappingValue(next), updatedBy: 'client' }); await ProductMapping.updateMany({ clientId, productCategoryId: category._id }, { productCategory: next, category: next, previousProductCategory: category.name }); return { ...category, name: next, normalizedName: normalizeMappingValue(next) }; } category.name = next; category.normalizedName = normalizeMappingValue(next); for (const map of this.memory.product.get(clientId)?.values() || []) if (String(map.productCategoryId) === String(category._id)) { map.category = next; map.productCategory = next; } return category; }
-  async saveSuggestions(clientId, products) { const records = products.filter((x) => x.mappingSource === 'ai-suggested' || x.mappingSource === 'needs-review').map((x) => ({ clientId, normalizedProductName: x.normalizedProductName, originalProductName: x.originalProductName, suggestedCategory: x.suggestedProductCategory || null, suggestedProductCategory: x.suggestedProductCategory || null, suggestedMasterCategory: x.suggestedMasterCategory || null, confidence: x.confidence ?? null, reason: x.suggestionReason || null, model: x.model || null, status: x.suggestionStatus || 'Needs Review' })); if (await this.database()) return Promise.all(records.map((x) => ProductClassificationSuggestion.findOneAndUpdate({ clientId, normalizedProductName: x.normalizedProductName }, { $setOnInsert: x }, { upsert: true, new: true }).lean())); const values = this.memory.suggestion.get(clientId) || []; records.forEach((x) => { if (!values.some((v) => v.normalizedProductName === x.normalizedProductName)) values.push({ ...x, createdAt: new Date(), updatedAt: new Date() }); }); this.memory.suggestion.set(clientId, values); return records; }
-  async listSuggestions(clientId) { if (await this.database()) return ProductClassificationSuggestion.aggregate([{ $match: { clientId } }, { $sort: { createdAt: -1 } }, { $group: { _id: '$normalizedProductName', item: { $first: '$$ROOT' } } }, { $replaceRoot: { newRoot: '$item' } }]); return this.memory.suggestion.get(clientId) || []; }
+  async taxonomySnapshot(clientId) {
+    const masters = await this.listMasters(clientId, true);
+    return { masters, categories: await this.listCategories(clientId, true, masters) };
+  }
+  async classificationContext(clientId, rows) {
+    const statusKeys = [...new Set(rows.map((row) => normalizeMappingValue(row.originalStatus)))];
+    const productKeys = [...new Set(rows.map((row) => row.normalizedProductName))];
+    const read = async (keys, load) => {
+      const result = [];
+      for (let offset = 0; offset < keys.length; offset += 1000) result.push(...await load(keys.slice(offset, offset + 1000)));
+      return result;
+    };
+    const [statusMappings, productMappings, suggestions, taxonomy] = await Promise.all([
+      read(statusKeys, (keys) => this.list('status', clientId, keys)),
+      read(productKeys, (keys) => this.list('product', clientId, keys)),
+      read(productKeys, (keys) => this.listSuggestions(clientId, keys)), this.taxonomySnapshot(clientId)
+    ]);
+    return { statusMappings, productMappings, suggestions, masterCategories: taxonomy.masters.filter((item) => item.active), productCategories: taxonomy.categories.filter((item) => item.active) };
+  }
+  async saveSuggestions(clientId, products) {
+    const records = products.filter((x) => x.mappingSource === 'ai-suggested' || x.mappingSource === 'needs-review').map((x) => ({ clientId, normalizedProductName: x.normalizedProductName, originalProductName: x.originalProductName, suggestedCategory: x.suggestedProductCategory || null, suggestedProductCategory: x.suggestedProductCategory || null, suggestedMasterCategory: x.suggestedMasterCategory || null, confidence: x.confidence ?? null, reason: x.suggestionReason || null, model: x.model || null, status: x.suggestionStatus || 'Needs Review' }));
+    if (!records.length) return records;
+    if (await this.database()) {
+      for (let offset = 0; offset < records.length; offset += 500) {
+        await ProductClassificationSuggestion.bulkWrite(records.slice(offset, offset + 500).map((record) => ({ updateOne: { filter: { clientId, normalizedProductName: record.normalizedProductName }, update: { $setOnInsert: record }, upsert: true } })), { ordered: true });
+      }
+    } else {
+      const values = this.memory.suggestion.get(clientId) || [];
+      const known = new Set(values.map((item) => item.normalizedProductName));
+      for (const record of records) if (!known.has(record.normalizedProductName)) { values.push({ ...record, createdAt: new Date(), updatedAt: new Date() }); known.add(record.normalizedProductName); }
+      this.memory.suggestion.set(clientId, values);
+    }
+    return records;
+  }
+  async listSuggestions(clientId, keys) {
+    if (await this.database()) return ProductClassificationSuggestion.aggregate([{ $match: { clientId, ...(keys ? { normalizedProductName: { $in: keys } } : {}) } }, { $sort: { createdAt: -1 } }, { $group: { _id: '$normalizedProductName', item: { $first: '$$ROOT' } } }, { $replaceRoot: { newRoot: '$item' } }]);
+    const wanted = keys && new Set(keys);
+    return (this.memory.suggestion.get(clientId) || []).filter((item) => !wanted || wanted.has(item.normalizedProductName));
+  }
   async decideSuggestion(clientId, product, status, details = {}) { const key = normalizeMappingValue(product); if (!key || !['Client Rejected', 'AI Approved', 'Client Modified', 'Manual'].includes(status)) throw duplicate('INVALID_SUGGESTION'); const update = { status, finalCategory: details.productCategory || details.finalCategory || null, finalProductCategory: details.productCategory || details.finalCategory || null, finalMasterCategory: details.masterCategory || null, decidedAt: new Date() }; if (await this.database()) return ProductClassificationSuggestion.findOneAndUpdate({ clientId, normalizedProductName: key }, update, { sort: { createdAt: -1 }, new: true }).lean(); const x = (this.memory.suggestion.get(clientId) || []).find((i) => i.normalizedProductName === key); return x && Object.assign(x, update);
   }
 }
