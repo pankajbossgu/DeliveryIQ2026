@@ -242,6 +242,9 @@ test('Report Review frontend uses accessible custom dialogs and selection-based 
   assert.match(script, /selectAll\.indeterminate/);
   assert.match(script, /function bulkProductAction\(/);
   assert.match(script, /Reject suggestion/);
+  assert.match(script, /function resetCurrentResult\(/);
+  assert.match(script, /Clear current result\?/);
+  assert.match(script, /selectedProducts\.clear\(\)/);
   assert.doesNotMatch(script, /Approve All AI Suggestions/);
 });
 

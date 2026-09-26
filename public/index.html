@@ -131,7 +131,7 @@
               <div class="selected-report-name"><h2 id="selected-report-title">Simple Report</h2><span class="selected-report-badge">✓ Selected</span></div>
               <p id="selected-report-description">Upload your Simple Report file.</p>
             </div>
-            <button type="button" class="button button-secondary" id="change-report-type">Change report type</button>
+            <div class="selected-report-actions"><button type="button" class="button button-secondary" id="change-report-type">Change report type</button><button type="button" class="button button-danger button-clear-result" id="clear-current-result" hidden>Clear Result</button></div>
           </section>
 
           <ol class="workflow-stepper" aria-label="Report workflow">
@@ -254,7 +254,6 @@
         <form id="universal-filters" class="universal-report-controls" aria-label="Universal Report controls">
           <input name="analyzeBy" value="product" type="hidden">
           <input name="paymentMode" value="" type="hidden">
-          <input name="categoryStatus" value="" type="hidden">
           <input name="fromDate" value="" type="hidden">
           <input name="toDate" value="" type="hidden">
 
@@ -341,8 +340,8 @@
               </div>
 
               <div class="universal-filter-field">
-                <label class="universal-field-label" for="universal-category-status">Category status</label>
-                <select id="universal-category-status" name="statusCategory" class="universal-secondary-select">
+                <label class="universal-field-label" for="universal-category-status">Category Status</label>
+                <select id="universal-category-status" name="categoryStatus" class="universal-secondary-select">
                   <option value="">All statuses</option>
                 </select>
               </div>

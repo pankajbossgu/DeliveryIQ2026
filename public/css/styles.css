@@ -1460,6 +1460,62 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+/* Product Review */
+.products-review-header {
+  min-width: 0;
+  margin: 16px 0 9px;
+}
+
+.products-review-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  flex-wrap: wrap;
+}
+
+.products-review-toolbar h3 { margin: 0; min-width: 0; color: #26344a; font-size: .94rem; }
+
+/* Product Review Toolbar */
+.product-selection-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f8faff;
+}
+
+.product-selection-toolbar strong { flex: 0 0 auto; color: #26344a; }
+.product-selection-toolbar select { min-width: 0; flex: 1 1 170px; }
+.product-selection-toolbar .button { min-height: 38px; flex: 0 1 auto; }
+
+/* Product Review Item */
+.product-review-card {
+  grid-template-columns: auto minmax(0, 1fr) minmax(180px, 1.1fr) minmax(240px, 1.4fr);
+  gap: 10px 12px;
+  align-items: center;
+  padding: 14px;
+}
+.product-review-card .product-select { align-self: start; margin-top: 2px; }
+.mapping-identity { min-width: 0; display: grid; gap: 2px; }
+.mapping-identity strong { overflow-wrap: anywhere; }
+.mapping-identity span, .product-review-details span { color: #718096; font-size: .78rem; }
+.product-review-details { min-width: 0; display: grid; gap: 3px; }
+.product-review-fields, .product-review-actions { min-width: 0; display: flex; gap: 8px; flex: 1 1 auto; flex-wrap: wrap; }
+.product-review-fields select { min-width: 0; flex: 1 1 130px; }
+.product-review-actions .button { min-height: 38px; min-width: 0; flex: 1 1 auto; }
+.product-review-card .mapping-card-error { grid-column: 1 / -1; margin: 0; }
+
+/* Clear Result */
+.selected-report-actions { display: flex; min-width: 0; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.button-clear-result { border-color: #efb4af; background: #fff8f7; color: #b42318; }
+.button-clear-result:hover { background: #ffeae7; }
+
 .mapping-card > span {
   color: #718096;
   font-size: 0.78rem;
@@ -2427,6 +2483,8 @@ button:disabled {
    11. Modal system
    -------------------------------------------------------------------------- */
 
+body.modal-open { overflow: hidden; }
+
 .app-modal-backdrop {
   position: fixed;
   z-index: 1000;
@@ -2919,9 +2977,14 @@ button:disabled {
     padding: 17px;
   }
 
+  .products-review-toolbar { align-items: flex-start; }
+  .select-all-control { width: 100%; }
+  .product-selection-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .product-selection-toolbar strong { grid-column: 1 / -1; }
+  .product-selection-toolbar select, .product-selection-toolbar .button { width: 100%; min-width: 0; }
   .product-review-card {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 9px;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
     padding: 13px;
   }
 
