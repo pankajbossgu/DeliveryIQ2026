@@ -228,7 +228,10 @@ const processSchema = new mongoose.Schema({
   createdAt: Date, updatedAt: Date, cancelledAt: Date
 }, { versionKey: false, strict: false });
 // The partial unique index is the server-side backstop for two concurrent browser tabs.
-processSchema.index({ clientId: 1 }, { unique: true, partialFilterExpression: { status: { $in: ACTIVE_PROCESS_STATUSES } }, name: 'one_active_report_process_per_client' });
+// Keep this separately named from the original index. Existing deployments may
+// still have the earlier index, which did not include failed (and therefore
+// still unfinished) processes in its partial filter.
+processSchema.index({ clientId: 1 }, { unique: true, partialFilterExpression: { status: { $in: ACTIVE_PROCESS_STATUSES } }, name: 'one_active_unfinished_report_process_per_client_v2' });
 const ReportProcess = mongoose.models.ReportProcess || mongoose.model('ReportProcess', processSchema, 'reportProcesses');
 class ProcessingStore {
   constructor({ mongoUri = process.env.MONGODB_URI } = {}) { this.mongoUri = mongoUri; this.connection = null; this.jobs = new Map(); }

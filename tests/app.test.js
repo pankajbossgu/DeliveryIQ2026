@@ -191,6 +191,13 @@ test('unfinished failed processes remain active until the client explicitly remo
   assert.equal(await store.getActiveProcess('client-active'), null);
 });
 
+test('unfinished process index includes failed jobs for existing deployments', () => {
+  const { ProcessingStore } = require('../src/reports');
+  const index = require('mongoose').models.ReportProcess.schema.indexes().find(([, options]) => options.name === 'one_active_unfinished_report_process_per_client_v2');
+  assert.deepEqual(index[1].partialFilterExpression.status.$in, ['queued', 'processing', 'review_required', 'finalizing', 'failed']);
+  assert.equal(typeof ProcessingStore, 'function');
+});
+
 test('Upload Data restoration has dedicated lifecycle states and does not reuse file validation errors', () => {
   const fs = require('node:fs');
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
@@ -208,8 +215,11 @@ test('Upload Data restoration has dedicated lifecycle states and does not reuse 
   assert.match(script, /function hasReviewSnapshot\(/);
   assert.match(script, /function unresolvedCount\(/);
   assert.match(script, /ACTIVE_REPORT_PROCESS/);
+  assert.match(script, /restorePromise/);
+  assert.match(script, /state\.validating/);
+  assert.match(script, /if \(state\.restoring \|\| state\.validating/);
   assert.match(script, /refreshConfig\(\)\.catch\(\(\) => \{\}\)/);
-  assert.match(script, /clearNotice\(\); if \(!\/\\\.\(csv\|xlsx\)/);
+  assert.match(script, /clearNotice\(\); setUploadLocked\(null\); if \(!\/\\\.\(csv\|xlsx\)/);
   const server = fs.readFileSync(require('node:path').join(__dirname, '..', 'src', 'app.js'), 'utf8');
   assert.match(server, /function activeProcessUploadMessage\(/);
   assert.ok(server.indexOf('const active = await processingStore.getActiveProcess(clientId);') < server.indexOf('const result = validateUpload'));
