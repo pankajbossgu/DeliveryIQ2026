@@ -154,10 +154,10 @@ test('universal read APIs paginate, validate, sort, and remain scoped to the ser
     response = await authenticatedFetch(base, `/api/universal/orders/ORD-1/history?limit=1`); body = await response.json(); assert.equal(body.occurrences[0].reportId, 'R2'); assert.equal(body.pagination.total, 2);
     response = await authenticatedFetch(base, `/api/universal/summary`); body = await response.json(); assert.deepEqual(body.summary, { totalOrders: 2, totalValue: 30, totalQuantity: 3, byStatusCategory: { Delivered: 2 }, byStatus: { Delivered: 2 } });
     response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=product&paymentMode=COD&clientId=other-client`); body = await response.json(); assert.equal(body.report.groupLabel, 'Product'); assert.equal(body.report.totals.totalOrders, 2); assert.equal(body.report.rows.reduce((total, row) => total + row.delivered, 0), 2); assert.deepEqual(body.report.paymentModes, ['COD']);
-    response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=paymentMode`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=paymentMode`); assert.equal(response.status, 400);
     response = await authenticatedFetch(base, `/api/universal/summary?search=ORD-2&clientId=other-client`); body = await response.json(); assert.equal(body.summary.totalOrders, 1); assert.equal(body.summary.totalQuantity, 1);
     response = await authenticatedFetch(base, `/api/universal/analytics?status=Delivered&fromDate=2026-01-02&toDate=2026-01-02&reportFromDate=2026-02-01&reportToDate=2026-02-01&clientId=other-client`); body = await response.json(); assert.equal(body.analytics.summary.totalOrders, 1); assert.equal(body.analytics.statusCategories[0].percentage, 100); assert.equal(body.analytics.trends[0].date, '2026-01-02');
-    response = await authenticatedFetch(base, `/api/universal/analytics?fromDate=2026-01-02&toDate=2026-01-01`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/analytics?fromDate=2026-01-02&toDate=2026-01-01`); assert.equal(response.status, 400);
     response = await authenticatedFetch(base, `/api/universal/analytics?status[$ne]=Delivered`); assert.equal(response.status, 422);
     response = await authenticatedFetch(base, `/api/universal/orders/does-not-exist/history`); assert.equal(response.status, 404);
   } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
@@ -195,7 +195,7 @@ test('Universal Report frontend uses the grouped business report without legacy 
   const fs = require('node:fs');
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /Category Status/); assert.match(html, /data-payment="COD"/); assert.match(html, /Today/); assert.match(html, /Last 30 Days/); assert.match(html, /Custom range/); assert.match(html, /Summary Report/);
+  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.doesNotMatch(html, /Category Status/); assert.match(html, /data-payment="COD"/); assert.match(html, /Today/); assert.match(html, /Last 30 Days/); assert.match(html, /Custom range/); assert.match(html, /Summary Report/);
   assert.doesNotMatch(html, /Search order ID|Latest status|name="statusCategory"/);
   assert.match(script, /\/api\/universal\/grouped/); assert.match(script, /appliedDateRange/); assert.match(script, /pendingDateRange/); assert.match(script, /validatePendingRange/); assert.doesNotMatch(script, /form\.elements\.search/);
 });
@@ -212,8 +212,7 @@ test('universal grouped report uses normalized dimensions, tenant scope, and pay
   assert.equal(products.groupLabel, 'Product'); assert.deepEqual(products.range, { from: '2026-01-01', to: '2026-01-02' }); assert.equal(products.rows.length, 1); assert.equal(products.rows[0].totalOrders, 2); assert.equal(products.rows[0].delivered, 1); assert.equal(products.rows[0].rto, 1); assert.equal(products.totals.totalOrders, 2);
   const courier = await store.groupedReport('a', { analyzeBy: 'courier' });
   assert.equal(courier.rows.length, 1); assert.equal(courier.rows[0].totalOrders, 2);
-  const filtered = await store.groupedReport('a', { analyzeBy: 'category_status', paymentMode: 'COD' });
-  assert.equal(filtered.totals.totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'Delivered').totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'RTO').totalOrders, 0);
+  await assert.rejects(() => store.groupedReport('a', { analyzeBy: 'category_status', paymentMode: 'COD' }), /Invalid Universal Report view/);
 });
 test('universal analytics are tenant-scoped, filter-aware, and preserve product-line quantities', async () => {
   const store = new UniversalStore({ mongoUri: null });
@@ -254,8 +253,8 @@ test('unfinished failed processes remain active until the client explicitly remo
   assert.equal((await store.getActiveProcess('client-active')).processId, first.job.processId);
   const second = await store.createValidated('client-active', input, 'request-b');
   assert.equal(second.existing, true);
-  await store.cancel('client-active', first.job.processId);
-  assert.equal(await store.getActiveProcess('client-active'), null);
+  assert.equal(await store.cancel('client-active', first.job.processId), null);
+  assert.equal((await store.getActiveProcess('client-active')).status, 'failed');
 });
 
 test('unfinished process index includes failed jobs for existing deployments', () => {
