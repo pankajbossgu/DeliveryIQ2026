@@ -362,3 +362,19 @@ test('bulk mapping writes unique product and status selections without repeated 
   const updated = await processes.updateReviews('bulk-client', created.job.processId, 'product', [{ value: 'Widget', classificationRequired: false }, { value: 'Gadget', classificationRequired: false }]);
   assert.equal(updated.result.classifications.products.filter((item) => !item.classificationRequired).length, 2);
 });
+
+test('upload restoration and Universal Report frontend retain route-scoped accessible loading states', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const script = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(script, /function finishUploadRestore\(\).*hideRestoreModal\(\).*setUploadLocked\(null\)/s);
+  assert.match(script, /function cancelUploadRestore\(\).*abort\(\).*finishUploadRestore\(\)/s);
+  assert.match(script, /state\.currentPage !== 'upload'/);
+  assert.match(script, /state\.restoreRequestId/);
+  assert.match(script, /universalResetForNavigation\(\).*analyzeBy = 'product'.*setActive\('\[data-analyze\]', 'product'/s);
+  assert.match(script, /Showing cached report · refreshing…/);
+  assert.match(script, /setUniversalRefreshing\(true\)/);
+  assert.match(html, /id="upload-restore-skeleton"[^>]*aria-busy="true"[^>]*hidden/);
+  assert.match(html, /id="universal-refresh-status"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(html, /class="universal-report-controls"[^>]*aria-busy="false"/);
+});
