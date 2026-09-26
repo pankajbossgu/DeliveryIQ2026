@@ -253,6 +253,7 @@
 
         <form id="universal-filters" class="universal-report-controls" aria-label="Universal Report controls">
           <input name="analyzeBy" value="product" type="hidden">
+          <input name="deliveryView" value="all_orders" type="hidden">
           <input name="paymentMode" value="" type="hidden">
           <input name="fromDate" value="" type="hidden">
           <input name="toDate" value="" type="hidden">
@@ -340,10 +341,11 @@
               </div>
 
               <div class="universal-filter-field">
-                <label class="universal-field-label" for="universal-category-status">Category Status</label>
-                <select id="universal-category-status" name="categoryStatus" class="universal-secondary-select">
-                  <option value="">All statuses</option>
-                </select>
+                <span class="universal-field-label">Delivery % View</span>
+                <div class="universal-analysis-control" role="group" aria-label="Delivery percentage view">
+                  <button type="button" data-delivery-view="all_orders" class="is-active" aria-pressed="true">All Orders</button>
+                  <button type="button" data-delivery-view="shipped_orders" aria-pressed="false">Shipped Orders</button>
+                </div>
               </div>
             </div>
           </section>

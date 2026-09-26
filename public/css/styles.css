@@ -2270,9 +2270,9 @@ button:disabled {
 .universal-card {
   display: flex;
   min-width: 0;
-  min-height: 132px;
+  min-height: 108px;
   flex-direction: column;
-  padding: 18px;
+  padding: 13px;
   border: 1px solid var(--border);
   border-top: 3px solid #cbd3e0;
   border-radius: var(--radius-lg);
@@ -2287,7 +2287,7 @@ button:disabled {
 }
 
 .universal-card > strong {
-  margin-top: 12px;
+  margin-top: 7px;
   color: #202d43;
   font-size: 1.5rem;
   letter-spacing: -0.03em;
@@ -2295,13 +2295,17 @@ button:disabled {
 
 .universal-card small {
   margin-top: auto;
-  padding-top: 9px;
+  padding-top: 5px;
   color: #69768a;
   font-size: 0.7rem;
 }
 
 .universal-card.metric-delivered {
   border-top-color: #61b48e;
+}
+
+.universal-card.metric-delivery {
+  border-top-color: var(--primary);
 }
 
 .universal-card.metric-transit {
@@ -3411,8 +3415,8 @@ body.modal-open { overflow: hidden; }
   }
 
   .universal-card {
-    min-height: 118px;
-    padding: 15px;
+    min-height: 104px;
+    padding: 12px;
   }
 
   .universal-card > strong {
