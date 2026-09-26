@@ -164,3 +164,15 @@ test('universal analytics are tenant-scoped, filter-aware, and preserve product-
   assert.equal(filtered.summary.totalOrders, 1); assert.equal(filtered.summary.totalQuantity, 3); assert.equal(filtered.trends[0].date, '2026-01-01');
   assert.equal((await store.summary('a', { search: 'A-RTO' })).totalOrders, 1);
 });
+
+test('Report Review frontend uses accessible custom dialogs and selection-based bulk actions', () => {
+  const fs = require('node:fs');
+  const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.doesNotMatch(script, /(?:window\.)?(?:alert|confirm|prompt)\s*\(/);
+  assert.match(script, /function openCategoryModal\(/);
+  assert.match(script, /aria-modal/);
+  assert.match(script, /selectAll\.indeterminate/);
+  assert.match(script, /function bulkProductAction\(/);
+  assert.match(script, /Reject suggestion/);
+  assert.doesNotMatch(script, /Approve All AI Suggestions/);
+});
