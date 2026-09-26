@@ -229,8 +229,8 @@ test('unfinished process index includes failed jobs for existing deployments', (
 test('Upload Data restoration has dedicated lifecycle states and does not reuse file validation errors', () => {
   const fs = require('node:fs');
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(script, /Checking for unfinished report\.\.\./);
-  assert.match(script, /Please wait while we restore your previous report\./);
+  assert.match(script, /Checking your reports\.\.\./);
+  assert.match(script, /Checking for unfinished reports\./);
   assert.match(script, /Couldn't check your current report\./);
   assert.match(script, /Couldn't restore your report\./);
   assert.match(script, /Previous report needs your attention/);
@@ -251,6 +251,15 @@ test('Upload Data restoration has dedicated lifecycle states and does not reuse 
   assert.match(script, /Unsupported file type/);
   assert.match(script, /Maximum supported size: 10 MB/);
   assert.match(script, /Checking your file…/);
+  assert.match(script, /Cancel this report\?/);
+  assert.match(script, /Cancelling report\.\.\./);
+  assert.match(script, /Keep Processing/);
+  assert.match(script, /Category required/);
+  assert.match(script, /Assign Category/);
+  assert.match(script, /Create new category/);
+  assert.match(script, /Select All/);
+  assert.match(script, /Apply to Selected/);
+  assert.match(script, /Updating \$\{selected\.length\} status mappings/);
   const server = fs.readFileSync(require('node:path').join(__dirname, '..', 'src', 'app.js'), 'utf8');
   assert.match(server, /function activeProcessUploadMessage\(/);
   assert.ok(server.indexOf('const active = await processingStore.getActiveProcess(clientId);') < server.indexOf('const result = validateUpload'));
