@@ -5,23 +5,58 @@ function el(tag, text, className) { const node = document.createElement(tag); if
 function clear(node) { node.replaceChildren(); }
 function page(name) {
   if (typeof closeMobileMenu === 'function') closeMobileMenu();
-  const activePage = document.querySelector(`[data-page-panel="${name}"]`);
+
+  const activePage = document.querySelector(
+    `[data-page-panel="${name}"]`
+  );
+
   if (!activePage) return;
-  if (state.activePage === 'universal' && name !== 'universal') state.universal.controller?.abort();
-  document.querySelectorAll('.app-page').forEach((node) => {
+
+  if (state.activePage === 'universal' && name !== 'universal') {
+    state.universal.controller?.abort();
+  }
+
+  document.querySelectorAll('[data-page-panel]').forEach((node) => {
     const active = node === activePage;
+
     node.hidden = !active;
     node.classList.toggle('is-active', active);
     node.setAttribute('aria-hidden', String(!active));
   });
+
+  document.querySelectorAll('[data-page]').forEach((node) => {
+    node.classList.toggle(
+      'is-active',
+      node.dataset.page === name
+    );
+  });
+
   state.activePage = name;
-  document.querySelectorAll('[data-page]').forEach((node) => node.classList.toggle('is-active', node.dataset.page === name));
-  activePage.scrollTop = 0;
-  if (name === 'upload') restoreActiveProcess();
-  if (name === 'reports' || name === 'history') loadReports();
-  if (name === 'universal') loadUniversal();
-  if (name === 'products') loadProducts();
-  if (name === 'statuses') loadStatuses();
+
+  if (name === 'upload') {
+    restoreActiveProcess();
+  }
+
+  if (name === 'reports' || name === 'history') {
+    loadReports();
+  }
+
+  if (name === 'universal') {
+    loadUniversal();
+  }
+
+  if (name === 'products') {
+    loadProducts();
+  }
+
+  if (name === 'statuses') {
+    loadStatuses();
+  }
+
+  window.scrollTo({
+    top: 0,
+    behavior: 'auto'
+  });
 }
 function setUpload(title, text) { $('#upload-state-title').textContent = title; $('#upload-state-copy').textContent = text; }
 function setWorkflowStep(active, completed = []) { const steps = [...document.querySelectorAll('#upload-workflow > .workflow-stepper li')]; steps.forEach((step, index) => { const complete = completed.includes(index); step.classList.toggle('is-active', index === active); step.classList.toggle('is-complete', complete); step.setAttribute('aria-current', index === active ? 'step' : 'false'); const number = step.querySelector('.workflow-step-number'); if (number) number.textContent = complete ? '✓' : String(index + 1); }); }
