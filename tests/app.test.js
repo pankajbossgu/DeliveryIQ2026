@@ -247,3 +247,21 @@ test('Upload Data restoration has dedicated lifecycle states and does not reuse 
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   assert.match(html, /id="file-upload" type="file" accept="\.csv,\.xlsx" hidden disabled/);
 });
+
+test('Upload Data starts with report selection and scopes templates to the chosen report type', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const script = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(html, /id="report-type-selector"/);
+  assert.match(html, /data-report-type="simple"/);
+  assert.match(html, /data-report-type="full"/);
+  assert.match(html, /id="upload-workflow" hidden/);
+  assert.match(html, /data-template-link="simple"/);
+  assert.match(html, /data-template-link="full"/);
+  assert.match(html, /id="change-report-type"/);
+  assert.match(script, /selectedReportType: null/);
+  assert.match(script, /function renderReportTypeSelection\(/);
+  assert.match(script, /link\.hidden = link\.dataset\.templateLink !== selected/);
+  assert.match(script, /Changing the report type will clear the current selected file\. Continue\?/);
+});
