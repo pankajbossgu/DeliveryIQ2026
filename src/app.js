@@ -117,6 +117,44 @@ async function applyReviewDecision(job, kind, value, body) {
   }
   return processingStore.updateReview(clientId, job.processId, kind, value, update);
 }
+async function applyReviewBulkUpdates(processId, kind, updates) {
+  const job = await processingStore.get(clientId, processId);
+  if (!job) throw Object.assign(new Error('This report process could not be found.'), { status: 404 });
+  if (job.status !== 'review_required') throw Object.assign(new Error('This report is not awaiting review.'), { status: 409 });
+  const items = job.result?.classifications?.[kind === 'product' ? 'products' : 'statuses'] || [];
+  const ids = updates.map((item) => String(kind === 'product' ? item.productId : item.statusId || '').trim());
+  if (ids.some((id) => !id) || new Set(ids).size !== ids.length || ids.some((id) => !items.some((item) => item.value === id))) throw Object.assign(new Error('One or more selected records do not belong to this process.'), { status: 400 });
+  let changes;
+  if (kind === 'status') {
+    if (updates.some((item) => !REPORT_CATEGORIES.includes(item.category))) throw Object.assign(new Error('Select a valid status category for every status.'), { status: 400 });
+    const groups = new Map(); updates.forEach((item) => { const group = groups.get(item.category) || []; group.push(item.statusId); groups.set(item.category, group); });
+    changes = []; for (const [category, values] of groups) changes.push(...(await mappingStore.saveMappings(clientId, 'status', values, category)).map((mapping) => ({ value: mapping.originalExample, category: mapping.category, status: 'Client Modified', classificationRequired: false })));
+  } else {
+    if (updates.some((item) => !String(item.categoryId || '').trim() || !String(item.masterCategory || '').trim())) throw Object.assign(new Error('Select a category for every product.'), { status: 400 });
+    const invalidTaxonomy = await Promise.all(updates.map(async (item) => {
+      const master = await mappingStore.master(clientId, item.masterCategory);
+      const category = master && await mappingStore.category(clientId, item.categoryId, master._id);
+      return !master || !category;
+    }));
+    if (invalidTaxonomy.some(Boolean)) throw Object.assign(new Error('Select a valid category for every product.'), { status: 400 });
+    const groups = new Map(); updates.forEach((item) => { const key = `${item.masterCategory}\u001f${item.categoryId}`; const group = groups.get(key) || { masterCategory: item.masterCategory, productCategory: item.categoryId, values: [] }; group.values.push(item.productId); groups.set(key, group); });
+    changes = []; for (const group of groups.values()) { const mappings = await mappingStore.saveProductMappings(clientId, group.values, { ...group, source: 'Manual' }); await mappingStore.decideSuggestions(clientId, group.values, 'Manual', group); changes.push(...mappings.map((mapping) => ({ value: mapping.originalExample, masterCategory: mapping.masterCategory, productCategory: mapping.productCategory, category: mapping.productCategory, mappingSource: 'Manual', suggestionStatus: 'Manual', status: 'Manual', classificationRequired: false, manualReason: null }))); }
+  }
+  const saved = await processingStore.updateReviews(clientId, job.processId, kind, changes);
+  if (!saved) throw Object.assign(new Error('This review changed in another window. Refresh and try again.'), { status: 409 });
+  return { saved, updated: changes.length };
+}
+function reviewBulkEndpoint(kind) { return async (request, response) => {
+  const updates = request.body?.updates;
+  const noun = kind === 'product' ? 'product' : 'status';
+  if (!Array.isArray(updates) || updates.length === 0) return response.status(400).json({ error: `No ${noun} updates supplied` });
+  if (updates.length > 500) return response.status(400).json({ error: `Maximum 500 ${noun} updates per request` });
+  try { const result = await applyReviewBulkUpdates(request.body?.processId, kind, updates); return response.json({ ok: true, updated: result.updated, matched: updates.length, process: processingStore.public(result.saved) }); }
+  catch (error) { return response.status(error.status || 400).json({ error: error.message || `Unable to update ${noun}s.` }); }
+}; }
+app.post('/api/review/products/bulk', reviewBulkEndpoint('product'));
+app.post('/api/review/statuses/bulk', reviewBulkEndpoint('status'));
+
 app.post('/api/report-processes/:processId/review/:kind/bulk', async (request, response) => {
   const kind = mappingKind(request.params.kind); const job = await processingStore.get(clientId, request.params.processId);
   const values = Array.isArray(request.body?.values) ? [...new Set(request.body.values.map((value) => String(value || '').trim()).filter(Boolean))] : [];
