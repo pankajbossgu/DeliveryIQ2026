@@ -104,15 +104,45 @@ app.get('/api/report-processes/:processId', async (request, response) => { const
 app.post('/api/report-processes/:processId/start', async (request, response) => { console.info(JSON.stringify({ event: 'report_process_start_requested', processId: request.params.processId })); const job = await processingStore.get(clientId, request.params.processId); if (!job) return response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be found.' }); if (['queued', 'failed'].includes(job.status)) { job.status = 'processing'; job.stage = 'preparing_data'; job.error = null; await processingStore.save(job); processingStore.start(clientId, job.processId, classifyProcess, { alreadyStarted: true }).catch((error) => console.warn(JSON.stringify({ event: 'report_process_start_failed', processId: job.processId, message: error?.message || 'unknown' }))); } return response.status(202).json({ success: true, process: processingStore.public(job) }); });
 app.post('/api/report-processes/:processId/finalize', async (request, response) => { const job = await processingStore.get(clientId, request.params.processId); if (!job) return response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be found.' }); if (job.status === 'completed') return response.json({ success: true, report: job.report, process: processingStore.public(job) }); if (job.status !== 'review_required' && job.status !== 'finalizing') return response.status(409).json({ success: false, code: 'PROCESS_NOT_READY', message: 'Finish processing before finalizing this report.' }); const rows = finalRowsFromProcess(job); if (!rows) return response.status(422).json({ success: false, code: 'CLASSIFICATION_REQUIRED', message: 'Some statuses or products still need classification before generating the report.', process: processingStore.public(job) }); job.status = 'finalizing'; job.stage = 'finalizing_report'; await processingStore.save(job); const report = await reportStore.create(clientId, { templateType: job.input.templateType, sourceFileName: job.input.file.name, rows, requestId: job.requestId }); await processingStore.complete(job, report); return response.status(201).json({ success: true, report, process: processingStore.public(job) }); });
 app.get('/api/mappings/:kind', async (request, response) => { const kind = mappingKind(request.params.kind); if (!kind) return response.status(404).json({ error: 'Not found' }); return response.json({ success: true, mappings: await mappingStore.list(kind, clientId) }); });
+async function applyReviewDecision(job, kind, value, body) {
+  let update;
+  if (kind === 'product') {
+    const action = body?.action;
+    if (action === 'reject') {
+      await mappingStore.decideSuggestion(clientId, value, 'Client Rejected', {});
+      update = { suggestionStatus: 'Client Rejected', status: 'Client Rejected', classificationRequired: true, manualReason: 'AI suggestion rejected. Please assign a category manually.', suggestedCategory: null, suggestedMasterCategory: null, suggestedProductCategory: null, mappingSource: 'needs-review' };
+    } else {
+      const source = action === 'change' ? 'Client Modified' : action === 'approve' ? 'AI Approved' : 'Manual';
+      const mapping = await mappingStore.saveProductMapping(clientId, value, { masterCategory: body?.masterCategory, productCategory: body?.productCategory, source });
+      update = { masterCategory: mapping.masterCategory, productCategory: mapping.productCategory, category: mapping.productCategory, mappingSource: source, suggestionStatus: source, status: source, classificationRequired: false, manualReason: null };
+      await mappingStore.decideSuggestion(clientId, value, source, update);
+    }
+  } else {
+    const mapping = await mappingStore.save('status', clientId, value, body?.category);
+    update = { category: mapping.category, status: 'Client Modified', classificationRequired: false };
+  }
+  return processingStore.updateReview(clientId, job.processId, kind, value, update);
+}
+app.post('/api/report-processes/:processId/review/:kind/bulk', async (request, response) => {
+  const kind = mappingKind(request.params.kind); const job = await processingStore.get(clientId, request.params.processId);
+  const values = Array.isArray(request.body?.values) ? [...new Set(request.body.values.map((value) => String(value || '').trim()).filter(Boolean))] : [];
+  if (!kind || !job) return response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be found.' });
+  if (job.status !== 'review_required') return response.status(409).json({ success: false, code: 'PROCESS_NOT_READY', message: 'This report is not awaiting review.' });
+  if (!values.length || values.length > 200) return response.status(422).json({ success: false, code: 'INVALID_BULK_REVIEW', message: 'Select between 1 and 200 unique values to update.' });
+  const reviewItems = job.result?.classifications?.[kind === 'product' ? 'products' : 'statuses'] || [];
+  const missingValue = values.find((value) => !reviewItems.some((item) => item.value === value));
+  if (missingValue) return response.status(404).json({ success: false, code: 'REVIEW_ITEM_NOT_FOUND', message: `Review item ${missingValue} could not be found.` });
+  try {
+    for (const value of values) await applyReviewDecision(job, kind, value, request.body);
+    const saved = await processingStore.get(clientId, job.processId);
+    return response.json({ success: true, updated: values.length, process: processingStore.public(saved) });
+  } catch (error) { return response.status(422).json({ success: false, code: error.code || 'INVALID_MAPPING', message: 'Select a valid category before saving.' }); }
+});
 app.post('/api/report-processes/:processId/review/:kind/:value', async (request, response) => {
   const kind = mappingKind(request.params.kind); const job = await processingStore.get(clientId, request.params.processId);
   if (!kind || !job) return response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be found.' });
   if (job.status !== 'review_required') return response.status(409).json({ success: false, code: 'PROCESS_NOT_READY', message: 'This report is not awaiting review.' });
-  try { let update;
-    if (kind === 'product') { const action = request.body?.action; if (action === 'reject') { await mappingStore.decideSuggestion(clientId, request.params.value, 'Client Rejected', {}); update = { suggestionStatus: 'Client Rejected', status: 'Client Rejected', classificationRequired: true, manualReason: 'AI suggestion rejected. Please assign a category manually.', suggestedCategory: null, suggestedMasterCategory: null, suggestedProductCategory: null, mappingSource: 'needs-review' }; }
-      else { const source = action === 'change' ? 'Client Modified' : action === 'approve' ? 'AI Approved' : 'Manual'; const mapping = await mappingStore.saveProductMapping(clientId, request.params.value, { masterCategory: request.body?.masterCategory, productCategory: request.body?.productCategory, source }); update = { masterCategory: mapping.masterCategory, productCategory: mapping.productCategory, category: mapping.productCategory, mappingSource: source, suggestionStatus: source, status: source, classificationRequired: false, manualReason: null }; await mappingStore.decideSuggestion(clientId, request.params.value, source, update); }
-    } else { const mapping = await mappingStore.save('status', clientId, request.params.value, request.body?.category); update = { category: mapping.category, status: 'Client Modified', classificationRequired: false }; }
-    const saved = await processingStore.updateReview(clientId, job.processId, kind, request.params.value, update); if (!saved) return response.status(404).json({ success: false, code: 'REVIEW_ITEM_NOT_FOUND', message: 'This review item could not be found.' }); return response.json({ success: true, process: processingStore.public(saved) });
+  try { const saved = await applyReviewDecision(job, kind, request.params.value, request.body); if (!saved) return response.status(404).json({ success: false, code: 'REVIEW_ITEM_NOT_FOUND', message: 'This review item could not be found.' }); return response.json({ success: true, process: processingStore.public(saved) });
   } catch (error) { return response.status(422).json({ success: false, code: error.code || 'INVALID_MAPPING', message: 'Select a valid category before saving.' }); }
 });
 app.delete('/api/report-processes/:processId', async (request, response) => { const job = await processingStore.cancel(clientId, request.params.processId); return job ? response.json({ success: true, process: processingStore.public(job) }) : response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be removed.' }); });

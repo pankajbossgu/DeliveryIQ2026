@@ -301,3 +301,16 @@ test('Upload Data starts with report selection and scopes templates to the chose
   assert.match(script, /link\.hidden = link\.dataset\.templateLink !== selected/);
   assert.match(script, /Changing the report type will clear the current selected file\. Continue\?/);
 });
+
+test('Report review bulk updates are server-authoritative and completion directs users to both reports', () => {
+  const fs = require('node:fs');
+  const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const appSource = fs.readFileSync(require('node:path').join(__dirname, '..', 'src', 'app.js'), 'utf8');
+  assert.match(appSource, /review\/:kind\/bulk/);
+  assert.match(appSource, /Select between 1 and 200 unique values to update/);
+  assert.match(script, /function saveBulkReviewDecision/);
+  assert.match(script, /function bulkProductMapping/);
+  assert.match(script, /Apply category/);
+  assert.match(script, /function renderCompletion/);
+  assert.match(script, /Open Universal Report/);
+});
