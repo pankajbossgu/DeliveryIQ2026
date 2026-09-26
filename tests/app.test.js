@@ -197,7 +197,7 @@ test('Universal Report frontend uses the grouped business report without legacy 
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
   assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /Category Status/); assert.match(html, /data-payment="COD"/); assert.match(html, /Last 30 Days/); assert.match(html, /Summary Report/);
   assert.doesNotMatch(html, /Search order ID|Latest status|name="statusCategory"/);
-  assert.match(script, /\/api\/universal\/grouped/); assert.doesNotMatch(script, /form\.elements\.search/);
+  assert.match(script, /\/api\/universal\/grouped/); assert.match(script, /\['Delivery %', 'deliveryPercentage'\]/); assert.doesNotMatch(script, /form\.elements\.search/);
 });
 
 
@@ -209,11 +209,11 @@ test('universal grouped report uses normalized dimensions, tenant scope, and pay
   ]);
   await store.syncCompletedReport('b', universalReport('b', 'G2', '2026-02-01T00:00:00Z'), [universalRow('PRIVATE')]);
   const products = await store.groupedReport('a', { analyzeBy: 'product' });
-  assert.equal(products.groupLabel, 'Product'); assert.deepEqual(products.range, { from: '2026-01-01', to: '2026-01-02' }); assert.equal(products.rows.length, 1); assert.equal(products.rows[0].totalOrders, 2); assert.equal(products.rows[0].delivered, 1); assert.equal(products.rows[0].rto, 1); assert.equal(products.totals.totalOrders, 2);
+  assert.equal(products.groupLabel, 'Product'); assert.deepEqual(products.range, { from: '2026-01-01', to: '2026-01-02' }); assert.equal(products.rows.length, 1); assert.equal(products.rows[0].totalOrders, 2); assert.equal(products.rows[0].delivered, 1); assert.equal(products.rows[0].rto, 1); assert.equal(products.rows[0].deliveryPercentage, 50); assert.equal(products.totals.totalOrders, 2);
   const courier = await store.groupedReport('a', { analyzeBy: 'courier' });
-  assert.equal(courier.rows.length, 1); assert.equal(courier.rows[0].totalOrders, 2);
+  assert.equal(courier.rows.length, 1); assert.equal(courier.rows[0].totalOrders, 2); assert.equal(courier.rows[0].deliveryPercentage, 50);
   const filtered = await store.groupedReport('a', { analyzeBy: 'category_status', paymentMode: 'COD' });
-  assert.equal(filtered.totals.totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'Delivered').totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'RTO').totalOrders, 0);
+  assert.equal(filtered.totals.totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'Delivered').totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'Delivered').deliveryPercentage, 100); assert.equal(filtered.rows.find((row) => row.name === 'RTO').totalOrders, 0); assert.equal(filtered.rows.find((row) => row.name === 'RTO').deliveryPercentage, 0);
 });
 test('universal analytics are tenant-scoped, filter-aware, and preserve product-line quantities', async () => {
   const store = new UniversalStore({ mongoUri: null });
