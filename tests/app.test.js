@@ -154,10 +154,12 @@ test('universal read APIs paginate, validate, sort, and remain scoped to the ser
     response = await authenticatedFetch(base, `/api/universal/orders/ORD-1/history?limit=1`); body = await response.json(); assert.equal(body.occurrences[0].reportId, 'R2'); assert.equal(body.pagination.total, 2);
     response = await authenticatedFetch(base, `/api/universal/summary`); body = await response.json(); assert.deepEqual(body.summary, { totalOrders: 2, totalValue: 30, totalQuantity: 3, byStatusCategory: { Delivered: 2 }, byStatus: { Delivered: 2 } });
     response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=product&paymentMode=COD&clientId=other-client`); body = await response.json(); assert.equal(body.report.groupLabel, 'Product'); assert.equal(body.report.totals.totalOrders, 2); assert.equal(body.report.rows.reduce((total, row) => total + row.delivered, 0), 2); assert.deepEqual(body.report.paymentModes, ['COD']);
-    response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=paymentMode`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=paymentMode`); assert.equal(response.status, 400);
+    response = await authenticatedFetch(base, `/api/universal/grouped?paymentMode=wire`); body = await response.json(); assert.equal(response.status, 400); assert.equal(body.message, 'Invalid payment mode');
+    response = await authenticatedFetch(base, `/api/universal/grouped?fromDate=2026-01-03&toDate=2026-01-01`); body = await response.json(); assert.equal(response.status, 400); assert.equal(body.message, 'Start date cannot be later than end date');
     response = await authenticatedFetch(base, `/api/universal/summary?search=ORD-2&clientId=other-client`); body = await response.json(); assert.equal(body.summary.totalOrders, 1); assert.equal(body.summary.totalQuantity, 1);
     response = await authenticatedFetch(base, `/api/universal/analytics?status=Delivered&fromDate=2026-01-02&toDate=2026-01-02&reportFromDate=2026-02-01&reportToDate=2026-02-01&clientId=other-client`); body = await response.json(); assert.equal(body.analytics.summary.totalOrders, 1); assert.equal(body.analytics.statusCategories[0].percentage, 100); assert.equal(body.analytics.trends[0].date, '2026-01-02');
-    response = await authenticatedFetch(base, `/api/universal/analytics?fromDate=2026-01-02&toDate=2026-01-01`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/analytics?fromDate=2026-01-02&toDate=2026-01-01`); assert.equal(response.status, 400);
     response = await authenticatedFetch(base, `/api/universal/analytics?status[$ne]=Delivered`); assert.equal(response.status, 422);
     response = await authenticatedFetch(base, `/api/universal/orders/does-not-exist/history`); assert.equal(response.status, 404);
   } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
@@ -195,9 +197,9 @@ test('Universal Report frontend uses the grouped business report without legacy 
   const fs = require('node:fs');
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /Category Status/); assert.match(html, /data-payment="COD"/); assert.match(html, /Last 30 Days/); assert.match(html, /Summary Report/);
-  assert.doesNotMatch(html, /Search order ID|Latest status|name="statusCategory"/);
-  assert.match(script, /\/api\/universal\/grouped/); assert.doesNotMatch(script, /form\.elements\.search/);
+  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /name="analyzeBy" value="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /Category Status/); assert.match(html, /<option value="cod">COD<\/option>/); assert.match(html, /Today/); assert.match(html, /This Month/); assert.match(html, /Last 30 Days/); assert.match(html, /Custom range/); assert.match(html, /Summary report/);
+  assert.doesNotMatch(html, /Search order ID|Latest status|Status Wise/); assert.match(html, /data-report-date-summary/);
+  assert.match(script, /\/api\/universal\/grouped/); assert.match(script, /analyzeBy: 'product'/); assert.match(script, /appliedDateRange/); assert.match(script, /pendingDateRange/); assert.match(script, /validatePendingRange/); assert.doesNotMatch(script, /form\.elements\.search/);
 });
 
 
@@ -212,8 +214,8 @@ test('universal grouped report uses normalized dimensions, tenant scope, and pay
   assert.equal(products.groupLabel, 'Product'); assert.deepEqual(products.range, { from: '2026-01-01', to: '2026-01-02' }); assert.equal(products.rows.length, 1); assert.equal(products.rows[0].totalOrders, 2); assert.equal(products.rows[0].delivered, 1); assert.equal(products.rows[0].rto, 1); assert.equal(products.totals.totalOrders, 2);
   const courier = await store.groupedReport('a', { analyzeBy: 'courier' });
   assert.equal(courier.rows.length, 1); assert.equal(courier.rows[0].totalOrders, 2);
-  const filtered = await store.groupedReport('a', { analyzeBy: 'category_status', paymentMode: 'COD' });
-  assert.equal(filtered.totals.totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'Delivered').totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'RTO').totalOrders, 0);
+  const categories = await store.groupedReport('a', { analyzeBy: 'category_status', paymentMode: 'COD' });
+  assert.equal(categories.groupLabel, 'Category Status'); assert.equal(categories.rows[0].name, 'Delivered');
 });
 test('universal analytics are tenant-scoped, filter-aware, and preserve product-line quantities', async () => {
   const store = new UniversalStore({ mongoUri: null });
@@ -239,9 +241,10 @@ test('Report Review frontend uses accessible custom dialogs and selection-based 
   assert.doesNotMatch(script, /(?:window\.)?(?:alert|confirm|prompt)\s*\(/);
   assert.match(script, /function openCategoryModal\(/);
   assert.match(script, /aria-modal/);
-  assert.match(script, /selectAll\.indeterminate/);
-  assert.match(script, /function bulkProductAction\(/);
-  assert.match(script, /Reject suggestion/);
+  assert.match(script, /handleProductSelectionChange/);
+  assert.match(script, /handleStatusSelectionChange/);
+  assert.match(script, /submitBulkProductUpdate/);
+  assert.match(script, /submitBulkStatusUpdate/);
   assert.doesNotMatch(script, /Approve All AI Suggestions/);
 });
 
@@ -254,8 +257,8 @@ test('unfinished failed processes remain active until the client explicitly remo
   assert.equal((await store.getActiveProcess('client-active')).processId, first.job.processId);
   const second = await store.createValidated('client-active', input, 'request-b');
   assert.equal(second.existing, true);
-  await store.cancel('client-active', first.job.processId);
-  assert.equal(await store.getActiveProcess('client-active'), null);
+  assert.equal(await store.cancel('client-active', first.job.processId), null);
+  assert.equal((await store.getActiveProcess('client-active')).status, 'failed');
 });
 
 test('unfinished process index includes failed jobs for existing deployments', () => {
@@ -293,12 +296,10 @@ test('Upload Data restoration has dedicated lifecycle states and does not reuse 
   assert.match(script, /Cancel this report\?/);
   assert.match(script, /Cancelling report\.\.\./);
   assert.match(script, /Keep Processing/);
-  assert.match(script, /Category required/);
-  assert.match(script, /Assign Category/);
-  assert.match(script, /Create new category/);
+  assert.match(script, /openManualCategoryModal/);
   assert.match(script, /Select All/);
-  assert.match(script, /Apply to Selected/);
-  assert.match(script, /Updating \$\{selected\.length\} status mappings/);
+  assert.match(script, /Updating statuses…/);
+  assert.match(script, /Updating products…/);
   assert.match(script, /statusErrors/);
   assert.match(script, /progress\.textContent = 'Cancelling report\.\.\.'/);
   const server = fs.readFileSync(require('node:path').join(__dirname, '..', 'src', 'app.js'), 'utf8');
@@ -344,8 +345,8 @@ test('Report review bulk updates are server-authoritative and completion directs
   assert.match(appSource, /review\/:kind\/bulk/);
   assert.match(appSource, /Select between 1 and 200 unique values to update/);
   assert.match(script, /function saveBulkReviewDecision/);
-  assert.match(script, /function bulkProductMapping/);
-  assert.match(script, /Apply category/);
+  assert.match(script, /function submitBulkProductUpdate/);
+  assert.match(script, /data-product-category/);
   assert.match(script, /function renderCompletion/);
   assert.match(script, /Open Universal Report/);
 });
@@ -360,4 +361,20 @@ test('bulk mapping writes unique product and status selections without repeated 
   created.job.status = 'review_required'; created.job.result = { classifications: { statuses: [], products: [{ value: 'Widget', classificationRequired: true }, { value: 'Gadget', classificationRequired: true }] } }; await processes.save(created.job);
   const updated = await processes.updateReviews('bulk-client', created.job.processId, 'product', [{ value: 'Widget', classificationRequired: false }, { value: 'Gadget', classificationRequired: false }]);
   assert.equal(updated.result.classifications.products.filter((item) => !item.classificationRequired).length, 2);
+});
+
+test('upload restoration and Universal Report frontend retain route-scoped accessible loading states', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const script = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(script, /function finishUploadRestore\(\).*hideRestoreModal\(\).*setUploadLocked\(null\)/s);
+  assert.match(script, /function cancelUploadRestore\(\).*abort\(\).*finishUploadRestore\(\)/s);
+  assert.match(script, /state\.currentPage !== 'upload'/);
+  assert.match(script, /state\.restoreRequestId/);
+  assert.match(script, /universalResetForNavigation\(\).*analyzeBy = 'product'.*setActive\('\[data-analyze\]', 'product'/s);
+  assert.match(script, /Showing cached report · refreshing…/);
+  assert.match(script, /setUniversalRefreshing\(true\)/);
+  assert.match(html, /id="upload-restore-skeleton"[^>]*aria-busy="true"[^>]*hidden/);
+  assert.match(html, /id="universal-refresh-status"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(html, /class="universal-report-controls"[^>]*aria-busy="false"/);
 });

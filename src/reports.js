@@ -4,8 +4,8 @@ const { normalizeOrderId, normalizePaymentMode } = require('./upload');
 const CATEGORIES = ['Delivered', 'In Transit', 'NDR', 'RTO', 'Cancelled', 'Other'];
 const rowSchema = new mongoose.Schema({ reportId: { type: String, index: true }, clientId: { type: String, index: true }, orderId: String, normalizedOrderId: String, orderDate: String, category: String, originalStatus: String, normalizedStatus: String, originalProductName: String, normalizedProductName: String, masterCategory: String, productCategory: String, paymentMode: String, courier: String, orderSource: String, quantity: Number, productPrice: Number, rowValue: Number }, { versionKey: false });
 rowSchema.index({ clientId: 1, reportId: 1, orderDate: 1 });
-const reportSchema = new mongoose.Schema({ reportId: { type: String, unique: true }, clientId: { type: String, index: true }, requestId: { type: String }, reportName: String, templateType: String, sourceFileName: String, sourceRowCount: Number, uniqueOrderCount: Number, reportStatus: String, createdAt: Date, completedAt: Date, summary: Object, dateRange: Object, availableDimensions: [String], analytics: Object }, { versionKey: false });
-reportSchema.index({ clientId: 1, createdAt: -1 }); reportSchema.index({ clientId: 1, requestId: 1 }, { unique: true, sparse: true });
+const reportSchema = new mongoose.Schema({ reportId: { type: String, unique: true }, clientId: { type: String, index: true }, requestId: { type: String }, processId: { type: String }, reportName: String, templateType: String, sourceFileName: String, sourceRowCount: Number, uniqueOrderCount: Number, reportStatus: String, syncStatus: { type: String, enum: ['pending', 'completed', 'failed'], default: 'pending' }, createdAt: Date, completedAt: Date, summary: Object, dateRange: Object, availableDimensions: [String], analytics: Object }, { versionKey: false });
+reportSchema.index({ clientId: 1, createdAt: -1 }); reportSchema.index({ clientId: 1, requestId: 1 }, { unique: true, sparse: true }); reportSchema.index({ clientId: 1, processId: 1 }, { unique: true, sparse: true });
 const Report = mongoose.models.Report || mongoose.model('Report', reportSchema); const ReportRow = mongoose.models.ReportRow || mongoose.model('ReportRow', rowSchema);
 
 // UniversalOrder is the tenant-scoped latest projection; UniversalOrderOccurrence is immutable
@@ -23,7 +23,8 @@ universalOrderSchema.index({ clientId: 1, latestReportCompletedAt: -1 });
 // These match the two date-filtered current-order analytics views. Product lines
 // are aggregated only after the tenant/date match, so no multikey index is needed.
 universalOrderSchema.index({ clientId: 1, orderDate: 1 });
-universalOrderSchema.index({ clientId: 1, statusCategory: 1 });
+universalOrderSchema.index({ clientId: 1, statusCategory: 1, orderDate: 1 });
+universalOrderSchema.index({ clientId: 1, paymentMode: 1, orderDate: 1 });
 universalOrderSchema.index({ clientId: 1, originalStatus: 1 });
 const universalOccurrenceSchema = new mongoose.Schema({
   clientId: { type: String, required: true, immutable: true }, canonicalOrderId: { type: String, required: true, immutable: true }, originalOrderId: String,
@@ -155,46 +156,23 @@ class UniversalStore {
   }
   async groupedReport(clientId, filters = {}) {
     const analyzeBy = filters.analyzeBy || 'product';
-    const labels = { product: 'Product', product_category: 'Product Category', courier: 'Courier', category_status: 'Status Category' };
+    const labels = { product: 'Product', product_category: 'Product Category', courier: 'Courier', category_status: 'Category Status' };
     if (!labels[analyzeBy]) throw new Error('Invalid Universal Report view.');
-    const filter = universalFilter(clientId, filters);
-    const database = await this.database();
-    const orders = await (database ? UniversalOrder.find(filter).lean() : [...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, filters)));
-    const paymentModes = database ? await UniversalOrder.distinct('paymentMode', { clientId, paymentMode: { $type: 'string', $ne: '' } }) : [...new Set([...this.orders.values()].filter((order) => order.clientId === clientId && order.paymentMode).map((order) => order.paymentMode))];
-    const emptyCounts = () => Object.fromEntries(CATEGORIES.map((category) => [category, 0]));
-    const groups = new Map();
-    const add = (key, name, order, value) => {
-      const item = groups.get(key) || { name, totalOrders: 0, delivered: 0, inTransit: 0, ndr: 0, rto: 0, cancelled: 0, other: 0, totalOrderValue: 0, deliveredOrderValue: 0, _orders: new Set() };
-      if (!item._orders.has(order.canonicalOrderId)) {
-        item._orders.add(order.canonicalOrderId); item.totalOrders += 1;
-        const category = order.statusCategory && CATEGORIES.includes(order.statusCategory) ? order.statusCategory : 'Other';
-        const field = { Delivered: 'delivered', 'In Transit': 'inTransit', NDR: 'ndr', RTO: 'rto', Cancelled: 'cancelled', Other: 'other' }[category]; item[field] += 1;
-      }
-      item.totalOrderValue += Number(value || 0);
-      if (order.statusCategory === 'Delivered') item.deliveredOrderValue += Number(value || 0);
-      groups.set(key, item);
-    };
-    for (const order of orders) {
-      if (analyzeBy === 'product' || analyzeBy === 'product_category') {
-        for (const line of order.products || []) {
-          const raw = analyzeBy === 'product' ? (line.normalizedProductName || line.originalProductName) : line.productCategory;
-          const display = analyzeBy === 'product' ? (line.originalProductName || line.normalizedProductName) : line.productCategory;
-          const name = String(display || 'Unmapped').trim() || 'Unmapped'; const key = String(raw || 'unmapped').trim().toLowerCase() || 'unmapped';
-          add(key, name, order, line.rowValue);
-        }
-      } else if (analyzeBy === 'courier') {
-        const name = String(order.courier || 'Unmapped courier').trim() || 'Unmapped courier'; add(name.toLowerCase(), name, order, order.totalValue);
-      } else {
-        const name = CATEGORIES.includes(order.statusCategory) ? order.statusCategory : 'Other'; add(name, name, order, order.totalValue);
-      }
+    const filter = universalFilter(clientId, filters); const database = await this.database();
+    const field = analyzeBy === 'product' ? '$products.originalProductName' : analyzeBy === 'product_category' ? '$products.productCategory' : analyzeBy === 'category_status' ? '$statusCategory' : '$courier';
+    if (database) {
+      const stages = [{ $match: filter }];
+      if (analyzeBy === 'product' || analyzeBy === 'product_category') stages.push({ $unwind: { path: '$products', preserveNullAndEmptyArrays: true } });
+      stages.push({ $group: { _id: { name: { $ifNull: [field, 'Unmapped'] }, order: '$canonicalOrderId' }, statusCategory: { $first: '$statusCategory' }, category: { $first: '$products.productCategory' }, value: { $sum: { $ifNull: [analyzeBy === 'courier' || analyzeBy === 'category_status' ? '$totalValue' : '$products.rowValue', 0] } } } }, { $group: { _id: '$_id.name', totalOrders: { $sum: 1 }, delivered: { $sum: { $cond: [{ $eq: ['$statusCategory', 'Delivered'] }, 1, 0] } }, inTransit: { $sum: { $cond: [{ $eq: ['$statusCategory', 'In Transit'] }, 1, 0] } }, ndr: { $sum: { $cond: [{ $eq: ['$statusCategory', 'NDR'] }, 1, 0] } }, rto: { $sum: { $cond: [{ $eq: ['$statusCategory', 'RTO'] }, 1, 0] } }, cancelled: { $sum: { $cond: [{ $eq: ['$statusCategory', 'Cancelled'] }, 1, 0] } }, other: { $sum: { $cond: [{ $in: ['$statusCategory', CATEGORIES] }, 0, 1] } }, totalOrderValue: { $sum: '$value' }, deliveredOrderValue: { $sum: { $cond: [{ $eq: ['$statusCategory', 'Delivered'] }, '$value', 0] } } } }, { $sort: { totalOrders: -1, _id: 1 } });
+      const [grouped, summary, dateRange] = await Promise.all([UniversalOrder.aggregate(stages), UniversalOrder.aggregate([{ $match: filter }, { $group: { _id: null, totalOrders: { $sum: 1 }, delivered: { $sum: { $cond: [{ $eq: ['$statusCategory', 'Delivered'] }, 1, 0] } }, inTransit: { $sum: { $cond: [{ $eq: ['$statusCategory', 'In Transit'] }, 1, 0] } }, ndr: { $sum: { $cond: [{ $eq: ['$statusCategory', 'NDR'] }, 1, 0] } }, rto: { $sum: { $cond: [{ $eq: ['$statusCategory', 'RTO'] }, 1, 0] } }, cancelled: { $sum: { $cond: [{ $eq: ['$statusCategory', 'Cancelled'] }, 1, 0] } }, other: { $sum: { $cond: [{ $in: ['$statusCategory', CATEGORIES] }, 0, 1] } }, totalOrderValue: { $sum: { $ifNull: ['$totalValue', 0] } }, deliveredOrderValue: { $sum: { $cond: [{ $eq: ['$statusCategory', 'Delivered'] }, { $ifNull: ['$totalValue', 0] }, 0] } } } }]), UniversalOrder.aggregate([{ $match: filter }, { $group: { _id: null, from: { $min: '$orderDate' }, to: { $max: '$orderDate' } } }])]);
+      const totals = summary[0] || {}; const rows = grouped.map((row) => ({ name: row._id || 'Unmapped', ...(analyzeBy === 'product' ? { category: row.category || 'Unmapped' } : {}), ...Object.fromEntries(['totalOrders', 'delivered', 'inTransit', 'ndr', 'rto', 'cancelled', 'other', 'totalOrderValue', 'deliveredOrderValue'].map((key) => [key, Number(row[key] || 0)])) }));
+      return { analyzeBy, groupLabel: labels[analyzeBy], rows, totals: { ...totals, totalValue: Number(totals.totalOrderValue || 0), deliveredOrders: totals.delivered || 0, inTransitOrders: totals.inTransit || 0, ndrOrders: totals.ndr || 0, rtoOrders: totals.rto || 0, cancelledOrders: totals.cancelled || 0, otherOrders: totals.other || 0 }, paymentModes: await UniversalOrder.distinct('paymentMode', { clientId, paymentMode: { $type: 'string', $ne: '' } }), range: { from: dateRange[0]?.from || null, to: dateRange[0]?.to || null } };
     }
-    if (analyzeBy === 'category_status') for (const category of CATEGORIES) if (!groups.has(category)) groups.set(category, { name: category, totalOrders: 0, delivered: 0, inTransit: 0, ndr: 0, rto: 0, cancelled: 0, other: 0, totalOrderValue: 0, deliveredOrderValue: 0, _orders: new Set() });
-    const rows = [...groups.values()].map(({ _orders, ...row }) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'number' ? Number(value.toFixed(2)) : value]))).sort((a, b) => b.totalOrders - a.totalOrders || a.name.localeCompare(b.name));
-    const totals = summaryFromOrders(orders);
-    totals.deliveredOrders = totals.byStatusCategory.Delivered || 0; totals.inTransitOrders = totals.byStatusCategory['In Transit'] || 0; totals.ndrOrders = totals.byStatusCategory.NDR || 0; totals.rtoOrders = totals.byStatusCategory.RTO || 0; totals.cancelledOrders = totals.byStatusCategory.Cancelled || 0; totals.otherOrders = totals.byStatusCategory.Other || 0;
-    totals.deliveredOrderValue = Number(orders.filter((order) => order.statusCategory === 'Delivered').reduce((sum, order) => sum + Number(order.totalValue || 0), 0).toFixed(2));
-    const dates = orders.map((order) => order.orderDate).filter(Boolean).sort();
-    return { analyzeBy, groupLabel: labels[analyzeBy], rows, totals, paymentModes: paymentModes.sort((a, b) => String(a).localeCompare(String(b))), range: { from: dates[0] || null, to: dates.at(-1) || null } };
+    const orders = [...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, filters));
+    const groups = new Map(); const add = (name, order, value) => { const row = groups.get(name) || { name, totalOrders: 0, delivered: 0, inTransit: 0, ndr: 0, rto: 0, cancelled: 0, other: 0, totalOrderValue: 0, deliveredOrderValue: 0, ids: new Set() }; if (!row.ids.has(order.canonicalOrderId)) { row.ids.add(order.canonicalOrderId); row.totalOrders++; const key = { Delivered: 'delivered', 'In Transit': 'inTransit', NDR: 'ndr', RTO: 'rto', Cancelled: 'cancelled' }[order.statusCategory] || 'other'; row[key]++; } row.totalOrderValue += Number(value || 0); if (order.statusCategory === 'Delivered') row.deliveredOrderValue += Number(value || 0); groups.set(name, row); };
+    orders.forEach((order) => { if (analyzeBy === 'courier') return add(String(order.courier || 'Unmapped courier').trim().toLowerCase(), order, order.totalValue); if (analyzeBy === 'category_status') return add(order.statusCategory || 'Other', order, order.totalValue); return (order.products || []).forEach((line) => add(analyzeBy === 'product' ? String(line.normalizedProductName || line.originalProductName || 'Unmapped').trim().toLowerCase() : (line.productCategory || 'Unmapped'), order, line.rowValue)); });
+    const totals = { totalOrders: orders.length, delivered: 0, inTransit: 0, ndr: 0, rto: 0, cancelled: 0, other: 0, totalOrderValue: 0, deliveredOrderValue: 0 }; orders.forEach((order) => { const key = { Delivered: 'delivered', 'In Transit': 'inTransit', NDR: 'ndr', RTO: 'rto', Cancelled: 'cancelled' }[order.statusCategory] || 'other'; totals[key]++; totals.totalOrderValue += Number(order.totalValue || 0); if (order.statusCategory === 'Delivered') totals.deliveredOrderValue += Number(order.totalValue || 0); });
+    return { analyzeBy, groupLabel: labels[analyzeBy], rows: [...groups.values()].map(({ ids, ...row }) => row).sort((a, b) => b.totalOrders - a.totalOrders || a.name.localeCompare(b.name)), totals: { ...totals, totalValue: totals.totalOrderValue, deliveredOrders: totals.delivered, inTransitOrders: totals.inTransit, ndrOrders: totals.ndr, rtoOrders: totals.rto, cancelledOrders: totals.cancelled, otherOrders: totals.other }, paymentModes: [...new Set(orders.map((order) => order.paymentMode).filter(Boolean))], range: { from: orders.map((x) => x.orderDate).filter(Boolean).sort()[0] || null, to: orders.map((x) => x.orderDate).filter(Boolean).sort().at(-1) || null } };
   }
   async markFailed(clientId, reportId) {
     const error = 'Universal report synchronization could not be completed.';
@@ -252,12 +230,12 @@ class ReportStore {
     return this.synchronizeUniversal(clientId, report, rows);
   }
   async create(clientId, input) {
-    const reportId = crypto.randomUUID(); const calculated = aggregate(input.rows, input.templateType); const dates = input.rows.map((row) => row.orderDate || row.order_date).filter(Boolean).sort();
-    const report = { reportId, clientId, requestId: input.requestId, reportName: input.reportName || `Delivery Report — ${dates[0] === dates.at(-1) ? dates[0] : `${dates[0]}–${dates.at(-1)}`}`, templateType: input.templateType, sourceFileName: input.sourceFileName, sourceRowCount: input.rows.length, uniqueOrderCount: calculated.totalOrders, reportStatus: 'processing', createdAt: new Date(), completedAt: null, summary: calculated.summary, dateRange: { from: dates[0] || null, to: dates.at(-1) || null }, availableDimensions: dimensions(input.templateType), analytics: calculated.analytics };
+    if (input.processId) { const existing = await (await this.database() ? Report.findOne({ clientId, processId: input.processId }).lean() : [...this.memory.values()].find((item) => item.clientId === clientId && item.processId === input.processId)); if (existing) return existing; } const reportId = crypto.randomUUID(); const calculated = aggregate(input.rows, input.templateType); const dates = input.rows.map((row) => row.orderDate || row.order_date).filter(Boolean).sort();
+    const report = { reportId, clientId, requestId: input.requestId, processId: input.processId, reportName: input.reportName || `Delivery Report — ${dates[0] === dates.at(-1) ? dates[0] : `${dates[0]}–${dates.at(-1)}`}`, templateType: input.templateType, sourceFileName: input.sourceFileName, sourceRowCount: input.rows.length, uniqueOrderCount: calculated.totalOrders, reportStatus: 'processing', syncStatus: 'pending', createdAt: new Date(), completedAt: null, summary: calculated.summary, dateRange: { from: dates[0] || null, to: dates.at(-1) || null }, availableDimensions: dimensions(input.templateType), analytics: calculated.analytics };
     const persistedRows = persistedReportRows(clientId, reportId, input.rows); const database = await this.database();
     if (database) { if (input.requestId) { const existing = await Report.findOne({ clientId, requestId: input.requestId }).lean(); if (existing) return existing; } await Report.create(report); await ReportRow.insertMany(persistedRows); report.reportStatus = 'completed'; report.completedAt = new Date(); await Report.updateOne({ clientId, reportId }, { $set: { reportStatus: report.reportStatus, completedAt: report.completedAt } }); }
     else { if (input.requestId) { const existing = [...this.memory.values()].find((item) => item.clientId === clientId && item.requestId === input.requestId); if (existing) return existing; } this.memory.set(reportId, report); this.rows.set(reportId, persistedRows); report.reportStatus = 'completed'; report.completedAt = new Date(); }
-    console.info(JSON.stringify({ event: 'report_completed', clientId, reportId, orders: calculated.totalOrders })); await this.synchronizeUniversal(clientId, report, persistedRows); return report;
+    console.info(JSON.stringify({ event: 'report_completed', clientId, reportId, orders: calculated.totalOrders })); const sync = await this.synchronizeUniversal(clientId, report, persistedRows); report.syncStatus = sync.status === 'completed' ? 'completed' : 'failed'; if (database) await Report.updateOne({ clientId, reportId }, { $set: { syncStatus: report.syncStatus } }); else this.memory.set(reportId, report); return report;
   }
   async list(clientId) { if (await this.database()) return Report.find({ clientId, reportStatus: 'completed' }).sort({ createdAt: -1 }).lean(); return [...this.memory.values()].filter((report) => report.clientId === clientId && report.reportStatus === 'completed').sort((a, b) => b.createdAt - a.createdAt); }
   async detail(clientId, reportId, filters = {}) { const report = await (await this.database() ? Report.findOne({ clientId, reportId }).lean() : this.memory.get(reportId)); if (!report || report.clientId !== clientId) return null; const allRows = await (await this.database() ? ReportRow.find({ clientId, reportId }).lean() : this.rows.get(reportId) || []); const rows = applyFilters(allRows, filters, report.templateType); return { ...report, filtered: aggregate(rows, report.templateType), filters: { availableDimensions: report.availableDimensions }, exportRows: rows }; }
@@ -267,8 +245,8 @@ const ACTIVE_PROCESS_STATUSES = ['queued', 'processing', 'review_required', 'fin
 const processSchema = new mongoose.Schema({
   processId: { type: String, unique: true, index: true }, clientId: { type: String, index: true }, requestId: String,
   status: { type: String, index: true }, stage: String, input: mongoose.Schema.Types.Mixed,
-  result: mongoose.Schema.Types.Mixed, report: mongoose.Schema.Types.Mixed, error: String,
-  createdAt: Date, updatedAt: Date, cancelledAt: Date
+  result: mongoose.Schema.Types.Mixed, report: mongoose.Schema.Types.Mixed, error: String, errorMessage: String,
+  createdAt: Date, updatedAt: Date, startedAt: Date, completedAt: Date, cancelledAt: Date
 }, { versionKey: false, strict: false });
 // The partial unique index is the server-side backstop for two concurrent browser tabs.
 // Keep this separately named from the original index. Existing deployments may
@@ -289,10 +267,24 @@ class ProcessingStore {
   }
   async get(clientId, processId) { if (await this.database()) return ReportProcess.findOne({ clientId, processId }).lean(); const job = this.jobs.get(processId); return job?.clientId === clientId ? job : null; }
   async save(job) { job.updatedAt = new Date(); if (await this.database()) { await ReportProcess.updateOne({ clientId: job.clientId, processId: job.processId }, { $set: job }); } else this.jobs.set(job.processId, job); return job; }
-  async start(clientId, processId, execute, { alreadyStarted = false } = {}) { const job = await this.get(clientId, processId); if (!job) return null; const active = await this.getActiveProcess(clientId); if (active && active.processId !== processId) return null; if (!alreadyStarted && !['queued', 'failed'].includes(job.status)) return job; if (!alreadyStarted) { job.status = 'processing'; job.stage = 'preparing_data'; job.error = null; await this.save(job); }
-    try { job.stage = 'processing_orders'; await this.save(job); const cancelled = async () => (await this.get(clientId, processId))?.status === 'cancelled'; const stage = async (value) => { if (await cancelled()) return false; job.stage = value; await this.save(job); return true; }; const outcome = await execute(job, stage, cancelled); const latest = await this.get(clientId, processId); if (latest?.status === 'cancelled' || outcome?.cancelled) return latest || job; const result = outcome.result || outcome; job.result = result; if (outcome.report) return this.complete(job, outcome.report); const unresolved = result.classifications.statuses.some((item) => item.classificationRequired) || result.classifications.products.some((item) => item.classificationRequired); job.status = unresolved ? 'review_required' : 'finalizing'; job.stage = unresolved ? 'preparing_review' : 'finalizing_report'; await this.save(job); } catch (error) { const latest = await this.get(clientId, processId); if (latest?.status === 'cancelled') return latest; job.status = 'failed'; job.stage = 'failed'; job.error = 'Report generation could not be completed.'; await this.save(job); console.warn(JSON.stringify({ event: 'report_processing_failed', processId: job.processId, message: error?.message || 'unknown' })); } return job; }
-  async complete(job, report) { const latest = await this.get(job.clientId, job.processId); if (!latest || latest.status === 'cancelled') return latest; job.status = 'completed'; job.stage = 'completed'; job.report = report; job.updatedAt = new Date(); if (await this.database()) { const completed = await ReportProcess.findOneAndUpdate({ clientId: job.clientId, processId: job.processId, status: { $ne: 'cancelled' } }, { $set: job }, { new: true }).lean(); return completed || await this.get(job.clientId, job.processId); } this.jobs.set(job.processId, job); return job; }
-  async cancel(clientId, processId) { const job = await this.get(clientId, processId); if (!job || !ACTIVE_PROCESS_STATUSES.includes(job.status)) return null; job.status = 'cancelled'; job.stage = 'cancelled'; job.cancelledAt = new Date(); return this.save(job); }
+  async claimStart(clientId, processId) {
+    const update = { status: 'processing', stage: 'preparing_data', error: null, errorMessage: null, startedAt: new Date(), updatedAt: new Date() };
+    if (await this.database()) return ReportProcess.findOneAndUpdate({ clientId, processId, status: 'queued' }, { $set: update }, { new: true }).lean();
+    const job = await this.get(clientId, processId); if (!job || job.status !== 'queued') return null; Object.assign(job, update); this.jobs.set(processId, job); return job;
+  }
+  async claimFinalization(clientId, processId) {
+    const update = { status: 'finalizing', stage: 'finalizing_report', updatedAt: new Date() };
+    if (await this.database()) return ReportProcess.findOneAndUpdate({ clientId, processId, status: 'review_required' }, { $set: update }, { new: true }).lean();
+    const job = await this.get(clientId, processId); if (!job || job.status !== 'review_required') return null; Object.assign(job, update); this.jobs.set(processId, job); return job;
+  }
+  async start(clientId, processId, execute, { alreadyStarted = false } = {}) { const job = alreadyStarted ? await this.get(clientId, processId) : await this.claimStart(clientId, processId); if (!job) return null; const active = await this.getActiveProcess(clientId); if (active && active.processId !== processId) return null;
+    try { job.stage = 'processing_orders'; await this.save(job); const cancelled = async () => (await this.get(clientId, processId))?.status === 'cancelled'; const stage = async (value) => { if (await cancelled()) return false; job.stage = value; await this.save(job); return true; }; const outcome = await execute(job, stage, cancelled); const latest = await this.get(clientId, processId); if (latest?.status === 'cancelled' || outcome?.cancelled) return latest || job; const result = outcome.result || outcome; job.result = result; if (outcome.report) return this.complete(job, outcome.report); const unresolved = result.classifications.statuses.some((item) => item.classificationRequired) || result.classifications.products.some((item) => item.classificationRequired); job.status = unresolved ? 'review_required' : 'finalizing'; job.stage = unresolved ? 'preparing_review' : 'finalizing_report'; await this.save(job); } catch (error) { const latest = await this.get(clientId, processId); if (latest?.status === 'cancelled') return latest; const safeErrorMessage = 'Report generation could not be completed.'; job.status = 'failed'; job.stage = 'failed'; job.error = safeErrorMessage; job.errorMessage = safeErrorMessage; job.completedAt = new Date(); await this.save(job); console.warn(JSON.stringify({ event: 'report_processing_failed', processId: job.processId, message: error?.message || 'unknown' })); } return job; }
+  async complete(job, report) { const latest = await this.get(job.clientId, job.processId); if (!latest || latest.status === 'cancelled') return latest; job.status = 'completed'; job.stage = 'completed'; job.report = report; job.completedAt = new Date(); job.updatedAt = job.completedAt; if (await this.database()) { const completed = await ReportProcess.findOneAndUpdate({ clientId: job.clientId, processId: job.processId, status: { $in: ['processing', 'finalizing'] } }, { $set: job }, { new: true }).lean(); return completed || await this.get(job.clientId, job.processId); } this.jobs.set(job.processId, job); return job; }
+  async cancel(clientId, processId) {
+    const update = { status: 'cancelled', stage: 'cancelled', cancelledAt: new Date(), updatedAt: new Date() };
+    if (await this.database()) return ReportProcess.findOneAndUpdate({ clientId, processId, status: { $in: ['queued', 'processing'] } }, { $set: update }, { new: true }).lean();
+    const job = await this.get(clientId, processId); if (!job || !['queued', 'processing'].includes(job.status)) return null; Object.assign(job, update); this.jobs.set(processId, job); return job;
+  }
   async updateReview(clientId, processId, kind, value, update) { const job = await this.get(clientId, processId); if (!job || job.status !== 'review_required') return null; const item = job.result?.classifications?.[kind === 'product' ? 'products' : 'statuses']?.find((entry) => entry.value === value); if (!item) return null; Object.assign(item, update); return this.save(job); }
   async updateReviews(clientId, processId, kind, updates) {
     const key = kind === 'product' ? 'products' : 'statuses'; const job = await this.get(clientId, processId);
