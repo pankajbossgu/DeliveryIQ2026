@@ -179,6 +179,8 @@ test('universal CSV export streams only filtered current tenant orders and prese
     response = await authenticatedFetch(base, `/api/universal/export?$where=sleep(1)`); assert.equal(response.status, 422);
     response = await authenticatedFetch(base, `/api/universal/export?search[$regex]=SAFE`); assert.equal(response.status, 422);
     response = await authenticatedFetch(base, `/api/universal/export?statusCategory=Cancelled`); assert.equal(response.status, 200); assert.match(await response.text(), /Order ID/);
+    response = await authenticatedFetch(base, `/api/universal/export?fromDate=2026-01-01&toDate=2026-01-01&exportType=full&format=xlsx`); assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /spreadsheetml/); assert.deepEqual([...new Uint8Array(await response.arrayBuffer()).slice(0, 2)], [80, 75]);
+    response = await authenticatedFetch(base, `/api/universal/export?fromDate=2026-01-01&toDate=2026-01-01&analyzeBy=product&exportType=summary&format=xlsx`); assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /spreadsheetml/); assert.deepEqual([...new Uint8Array(await response.arrayBuffer()).slice(0, 2)], [80, 75]);
   } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
 });
 
