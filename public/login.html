@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Sign in to DeliveryIQ.">
+    <title>Sign in | DeliveryIQ</title>
+    <link rel="stylesheet" href="/css/styles.css">
+  </head>
+  <body class="login-page">
+    <main class="login-shell">
+      <section class="login-card" aria-labelledby="login-title">
+        <a class="brand login-brand" href="/login" aria-label="DeliveryIQ sign in"><span class="brand-mark" aria-hidden="true">D</span><span>DeliveryIQ</span></a>
+        <p class="eyebrow">ADMIN ACCESS</p>
+        <h1 id="login-title">Welcome back</h1>
+        <p class="login-intro">Sign in to access your delivery intelligence workspace.</p>
+        <form id="login-form" class="login-form">
+          <label for="username">Username</label>
+          <input id="username" name="username" type="text" autocomplete="username" required maxlength="200">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="200">
+          <p id="login-error" class="login-error" role="alert" hidden></p>
+          <button id="login-submit" class="button button-primary login-submit" type="submit">Login</button>
+        </form>
+      </section>
+    </main>
+    <script src="/js/login.js"></script>
+  </body>
+</html>

@@ -1,4 +1,5 @@
 const path = require('node:path');
+const crypto = require('node:crypto');
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -10,6 +11,16 @@ const { ReportStore, ProcessingStore, csv: reportCsv, csvLine, universalExportRo
 const { GeminiProductClassifier } = require('./product-classifier');
 
 const app = express(); const publicDirectory = path.join(__dirname, '..', 'public'); const mappingStore = new MappingStore(); const reportStore = new ReportStore(); const processingStore = new ProcessingStore();
+const SESSION_COOKIE = 'deliveryiq_admin_session';
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
+function cookies(request) { return Object.fromEntries((request.headers.cookie || '').split(';').map((part) => part.trim().split(/=(.*)/s, 2)).filter(([name]) => name).map(([name, value]) => [name, decodeURIComponent(value || '')])); }
+function sessionSignature(value) { return crypto.createHmac('sha256', process.env.SESSION_SECRET || '').update(value).digest('base64url'); }
+function timingSafeEqual(left, right) { const leftBuffer = Buffer.from(String(left)); const rightBuffer = Buffer.from(String(right)); return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer); }
+function createSession(username) { const now = Math.floor(Date.now() / 1000); const payload = Buffer.from(JSON.stringify({ sub: username, iat: now, exp: now + SESSION_MAX_AGE_SECONDS, nonce: crypto.randomBytes(16).toString('base64url') })).toString('base64url'); return `${payload}.${sessionSignature(payload)}`; }
+function validSession(token) { if (!token || !process.env.SESSION_SECRET) return false; const [payload, signature, extra] = token.split('.'); if (!payload || !signature || extra || !timingSafeEqual(signature, sessionSignature(payload))) return false; try { const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); return session.sub === process.env.ADMIN_USERNAME && Number.isInteger(session.exp) && session.exp > Math.floor(Date.now() / 1000); } catch { return false; } }
+function sessionCookie(value, maxAge = SESSION_MAX_AGE_SECONDS) { return `${SESSION_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`; }
+function requireAdmin(request, response, next) { if (validSession(cookies(request)[SESSION_COOKIE])) return next(); return response.status(401).json({ success: false, code: 'UNAUTHORIZED', message: 'Authentication is required.' }); }
+function requireAdminPage(request, response, next) { if (validSession(cookies(request)[SESSION_COOKIE])) return next(); return response.redirect(302, `/login?next=${encodeURIComponent(request.originalUrl)}`); }
 const clientId = process.env.DEFAULT_CLIENT_ID || 'demo-client';
 const productClassifier = new GeminiProductClassifier(); // Server-owned development identity; do not read clientId from requests.
 app.locals.clientId = clientId;
@@ -17,6 +28,7 @@ app.locals.universalStore = reportStore.universalStore;
 app.disable('x-powered-by');
 app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], styleSrc: ["'self'"], scriptSrc: ["'self'"], imgSrc: ["'self'", 'data:'], connectSrc: ["'self'"] } } }));
 app.use(cors({ origin: process.env.APP_ORIGIN || false, credentials: true })); app.set('trust proxy', 1); app.use(express.json({ limit: '1mb' })); app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, limit: 200, standardHeaders: 'draft-7', legacyHeaders: false }));
+const loginRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, message: { success: false, code: 'LOGIN_RATE_LIMITED', message: 'Too many login attempts. Please try again later.' } });
 const universalExportRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false, message: { success: false, code: 'EXPORT_RATE_LIMITED', message: 'Too many export requests. Please try again later.' } });
 const mappingKind = (value) => ['status', 'product'].includes(value) ? value : null;
 const UNIVERSAL_STATUS_CATEGORIES = new Set(REPORT_CATEGORIES);
@@ -30,6 +42,15 @@ function universalQuery(query, { history = false } = {}) { const allowed = new S
 function universalOrderId(value) { const orderId = String(value ?? '').trim(); return orderId && orderId.length <= 200 && !/[\u0000-\u001f]/.test(orderId) ? orderId : null; }
 function universalRoute(handler) { return (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next); }
 app.get('/api/health', (request, response) => response.json({ status: 'ok', service: 'deliveryiq', timestamp: new Date().toISOString() }));
+app.post('/api/auth/login', loginRateLimit, (request, response) => {
+  const { username, password } = request.body || {};
+  const configured = process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD && process.env.SESSION_SECRET;
+  if (!configured || !timingSafeEqual(username, process.env.ADMIN_USERNAME) || !timingSafeEqual(password, process.env.ADMIN_PASSWORD)) return response.status(401).json({ success: false, code: 'INVALID_CREDENTIALS', message: 'Invalid username or password.' });
+  response.setHeader('Set-Cookie', sessionCookie(createSession(process.env.ADMIN_USERNAME)));
+  return response.json({ success: true });
+});
+app.post('/api/auth/logout', (request, response) => { response.setHeader('Set-Cookie', sessionCookie('', 0)); return response.json({ success: true }); });
+app.use('/api', requireAdmin);
 // Universal reports are read-only projections. The client scope is always the
 // server-owned authenticated/development context, never a request parameter.
 app.get('/api/universal/export', universalExportRateLimit, universalRoute(async (request, response, next) => {
@@ -113,5 +134,13 @@ app.use((error, request, response, next) => {
   if (error?.type === 'entity.too.large') return response.status(413).json({ success: false, code: 'FILE_TOO_LARGE', message: 'The uploaded file is larger than the 10 MB file limit.', details: { maxBytes: MAX_FILE_SIZE } });
   if (request.path.startsWith('/api/')) { console.warn(JSON.stringify({ event: 'api_request_failed', path: request.path, message: error?.message || 'unknown' })); return response.status(500).json({ success: false, code: 'INTERNAL_ERROR', message: 'The request could not be completed. Please try again.' }); }
   return next(error);
-}); app.use(express.static(publicDirectory)); app.use('/api', (request, response) => response.status(404).json({ error: 'Not found' })); app.get('*', (request, response) => response.sendFile(path.join(publicDirectory, 'index.html')));
+});
+app.get('/login', (request, response) => {
+  if (validSession(cookies(request)[SESSION_COOKIE])) return response.redirect(302, '/dashboard');
+  return response.sendFile(path.join(publicDirectory, 'login.html'));
+});
+app.use('/css', express.static(path.join(publicDirectory, 'css')));
+app.use('/js', express.static(path.join(publicDirectory, 'js')));
+app.use('/api', (request, response) => response.status(404).json({ error: 'Not found' }));
+app.get('*', requireAdminPage, (request, response) => response.sendFile(path.join(publicDirectory, 'index.html')));
 module.exports = app;

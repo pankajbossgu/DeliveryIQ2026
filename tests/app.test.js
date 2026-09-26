@@ -1,11 +1,32 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+process.env.ADMIN_USERNAME = 'test-admin';
+process.env.ADMIN_PASSWORD = 'test-password';
+process.env.SESSION_SECRET = 'test-session-secret-that-is-long-enough';
 const { MappingStore } = require('../src/mappings');
 const { classifyProducts } = require('../src/product');
 const { GeminiProductClassifier, validateGeminiResults, GEMINI_MODEL } = require('../src/product-classifier');
 const { validateUpload, processValidatedUpload } = require('../src/upload');
 const { aggregate, applyFilters, csv } = require('../src/reports');
 const { classifyStatus } = require('../src/classification');
+const testSessions = new Map();
+async function authenticatedFetch(base, pathname, options = {}) {
+  let cookie = testSessions.get(base);
+  if (!cookie) { const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: process.env.ADMIN_USERNAME, password: process.env.ADMIN_PASSWORD }) }); assert.equal(login.status, 200); cookie = login.headers.get('set-cookie').split(';', 1)[0]; testSessions.set(base, cookie); }
+  return fetch(`${base}${pathname}`, { ...options, headers: { ...options.headers, cookie } });
+}
+test('admin authentication protects application pages and private APIs, then creates and clears a secure session', async () => {
+  const app = require('../src/app'); const server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)); }); const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    let response = await fetch(`${base}/dashboard`, { redirect: 'manual' }); assert.equal(response.status, 302); assert.match(response.headers.get('location'), /^\/login\?next=/);
+    response = await fetch(`${base}/api/reports`); assert.equal(response.status, 401);
+    response = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'wrong', password: 'wrong' }) }); assert.equal(response.status, 401); assert.equal((await response.json()).message, 'Invalid username or password.');
+    response = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: process.env.ADMIN_USERNAME, password: process.env.ADMIN_PASSWORD }) }); assert.equal(response.status, 200); const cookie = response.headers.get('set-cookie'); assert.match(cookie, /HttpOnly/); assert.match(cookie, /SameSite=Lax/); assert.match(cookie, /Max-Age=28800/);
+    response = await fetch(`${base}/dashboard`, { headers: { cookie } }); assert.equal(response.status, 200);
+    response = await fetch(`${base}/api/auth/logout`, { method: 'POST', headers: { cookie } }); assert.equal(response.status, 200); assert.match(response.headers.get('set-cookie'), /Max-Age=0/);
+    response = await fetch(`${base}/api/reports`, { headers: { cookie: response.headers.get('set-cookie') } }); assert.equal(response.status, 401);
+  } finally { await new Promise((resolve) => server.close(resolve)); }
+});
 
 async function taxonomy(store, client = 'a') { const master = await store.saveMaster(client, 'Beauty & Personal Care'); const product = await store.saveCategory(client, 'Nail Serum', master._id); return { master, product }; }
 test('product categories require tenant master categories and remain tenant isolated', async () => { const store = new MappingStore({ mongoUri: null }); await assert.rejects(store.saveCategory('a', 'Nail Serum', null, { requireMaster: true }), { code: 'MASTER_CATEGORY_REQUIRED' }); const { master } = await taxonomy(store); assert.equal((await store.listCategories('a'))[0].masterCategory, master.name); assert.equal((await store.listMasters('b')).length, 0); });
@@ -93,22 +114,22 @@ test('universal read APIs paginate, validate, sort, and remain scoped to the ser
   await store.syncCompletedReport('other-client', universalReport('other-client', 'R3', '2026-02-03T00:00:00Z'), [universalRow('ORD-OTHER')]);
   const server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)); }); const base = `http://127.0.0.1:${server.address().port}`;
   try {
-    let response = await fetch(`${base}/api/universal/orders?limit=1&sortBy=canonicalOrderId&sortDirection=asc&clientId=other-client`); let body = await response.json();
+    let response = await authenticatedFetch(base, `/api/universal/orders?limit=1&sortBy=canonicalOrderId&sortDirection=asc&clientId=other-client`); let body = await response.json();
     assert.equal(response.status, 200); assert.equal(body.orders[0].canonicalOrderId, 'ORD-1'); assert.deepEqual(body.pagination, { page: 1, limit: 1, total: 2, totalPages: 2 });
-    response = await fetch(`${base}/api/universal/orders?search=ORD-2`); body = await response.json(); assert.equal(body.orders.length, 1); assert.equal(body.orders[0].canonicalOrderId, 'ORD-2');
-    response = await fetch(`${base}/api/universal/orders?limit=101`); assert.equal(response.status, 422);
-    response = await fetch(`${base}/api/universal/orders?page=-1`); assert.equal(response.status, 422);
-    response = await fetch(`${base}/api/universal/orders?fromDate=2026-99-99`); assert.equal(response.status, 422);
-    response = await fetch(`${base}/api/universal/orders?sortBy[$ne]=createdAt`); assert.equal(response.status, 422);
-    response = await fetch(`${base}/api/universal/orders/ORD-1`); body = await response.json(); assert.equal(body.order.latestReportId, 'R2');
-    response = await fetch(`${base}/api/universal/orders/ORD-OTHER`); assert.equal(response.status, 404);
-    response = await fetch(`${base}/api/universal/orders/ORD-1/history?limit=1`); body = await response.json(); assert.equal(body.occurrences[0].reportId, 'R2'); assert.equal(body.pagination.total, 2);
-    response = await fetch(`${base}/api/universal/summary`); body = await response.json(); assert.deepEqual(body.summary, { totalOrders: 2, totalValue: 30, totalQuantity: 3, byStatusCategory: { Delivered: 2 }, byStatus: { Delivered: 2 } });
-    response = await fetch(`${base}/api/universal/summary?search=ORD-2&clientId=other-client`); body = await response.json(); assert.equal(body.summary.totalOrders, 1); assert.equal(body.summary.totalQuantity, 1);
-    response = await fetch(`${base}/api/universal/analytics?status=Delivered&fromDate=2026-01-02&toDate=2026-01-02&reportFromDate=2026-02-01&reportToDate=2026-02-01&clientId=other-client`); body = await response.json(); assert.equal(body.analytics.summary.totalOrders, 1); assert.equal(body.analytics.statusCategories[0].percentage, 100); assert.equal(body.analytics.trends[0].date, '2026-01-02');
-    response = await fetch(`${base}/api/universal/analytics?fromDate=2026-01-02&toDate=2026-01-01`); assert.equal(response.status, 422);
-    response = await fetch(`${base}/api/universal/analytics?status[$ne]=Delivered`); assert.equal(response.status, 422);
-    response = await fetch(`${base}/api/universal/orders/does-not-exist/history`); assert.equal(response.status, 404);
+    response = await authenticatedFetch(base, `/api/universal/orders?search=ORD-2`); body = await response.json(); assert.equal(body.orders.length, 1); assert.equal(body.orders[0].canonicalOrderId, 'ORD-2');
+    response = await authenticatedFetch(base, `/api/universal/orders?limit=101`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/orders?page=-1`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/orders?fromDate=2026-99-99`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/orders?sortBy[$ne]=createdAt`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/orders/ORD-1`); body = await response.json(); assert.equal(body.order.latestReportId, 'R2');
+    response = await authenticatedFetch(base, `/api/universal/orders/ORD-OTHER`); assert.equal(response.status, 404);
+    response = await authenticatedFetch(base, `/api/universal/orders/ORD-1/history?limit=1`); body = await response.json(); assert.equal(body.occurrences[0].reportId, 'R2'); assert.equal(body.pagination.total, 2);
+    response = await authenticatedFetch(base, `/api/universal/summary`); body = await response.json(); assert.deepEqual(body.summary, { totalOrders: 2, totalValue: 30, totalQuantity: 3, byStatusCategory: { Delivered: 2 }, byStatus: { Delivered: 2 } });
+    response = await authenticatedFetch(base, `/api/universal/summary?search=ORD-2&clientId=other-client`); body = await response.json(); assert.equal(body.summary.totalOrders, 1); assert.equal(body.summary.totalQuantity, 1);
+    response = await authenticatedFetch(base, `/api/universal/analytics?status=Delivered&fromDate=2026-01-02&toDate=2026-01-02&reportFromDate=2026-02-01&reportToDate=2026-02-01&clientId=other-client`); body = await response.json(); assert.equal(body.analytics.summary.totalOrders, 1); assert.equal(body.analytics.statusCategories[0].percentage, 100); assert.equal(body.analytics.trends[0].date, '2026-01-02');
+    response = await authenticatedFetch(base, `/api/universal/analytics?fromDate=2026-01-02&toDate=2026-01-01`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/analytics?status[$ne]=Delivered`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/orders/does-not-exist/history`); assert.equal(response.status, 404);
   } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
 });
 
@@ -122,12 +143,12 @@ test('universal CSV export streams only filtered current tenant orders and prese
   await store.syncCompletedReport('other-client', universalReport('other-client', 'EXP-2', '2026-02-01T00:00:00Z'), [universalRow('PRIVATE-1', '2026-01-01', 'Secret', 1)]);
   const server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)); }); const base = `http://127.0.0.1:${server.address().port}`;
   try {
-    let response = await fetch(`${base}/api/universal/export?statusCategory=RTO&fromDate=2026-01-01&toDate=2026-01-01&clientId=other-client`); const output = await response.text();
+    let response = await authenticatedFetch(base, `/api/universal/export?statusCategory=RTO&fromDate=2026-01-01&toDate=2026-01-01&clientId=other-client`); const output = await response.text();
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /text\/csv/); assert.match(output, /Actual Status.*Status Category/); assert.match(output, /"'\+Returned","RTO"/); assert.match(output, /"'=Formula"/); assert.match(output, /"'@Other"/); assert.equal((output.match(/SAFE-1/g) || []).length, 2); assert.doesNotMatch(output, /DEL-1|PRIVATE-1/);
-    response = await fetch(`${base}/api/universal/export?statusCategory[$ne]=RTO`); assert.equal(response.status, 422);
-    response = await fetch(`${base}/api/universal/export?$where=sleep(1)`); assert.equal(response.status, 422);
-    response = await fetch(`${base}/api/universal/export?search[$regex]=SAFE`); assert.equal(response.status, 422);
-    response = await fetch(`${base}/api/universal/export?statusCategory=Cancelled`); assert.equal(response.status, 200); assert.match(await response.text(), /Order ID/);
+    response = await authenticatedFetch(base, `/api/universal/export?statusCategory[$ne]=RTO`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/export?$where=sleep(1)`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/export?search[$regex]=SAFE`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/export?statusCategory=Cancelled`); assert.equal(response.status, 200); assert.match(await response.text(), /Order ID/);
   } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
 });
 
