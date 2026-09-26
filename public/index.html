@@ -365,34 +365,67 @@
       </section>
 
       <!-- Product Mapping -->
-      <section class="page" data-page-panel="products" aria-labelledby="products-title" hidden>
-        <p class="eyebrow">PRODUCT MAPPING</p>
-        <h1 id="products-title">Manage master and product categories.</h1>
-        <form id="category-form" class="mapping-toolbar">
-          <label>Master category <input name="masterCategory" maxlength="80" required placeholder="e.g. Beauty & Personal Care"></label>
-          <label>Product category <input name="name" maxlength="80" required placeholder="e.g. Nail Serum"></label>
-          <button class="button button-primary">Create product category</button>
-        </form>
-        <div id="category-list" class="category-list"></div>
-        <div class="mapping-toolbar">
-          <label>Search product <input id="product-search" placeholder="Search product"></label>
-          <label>Category <select id="product-category-filter"><option value="">All categories</option></select></label>
+      <section class="page mapping-page" data-page-panel="products" aria-labelledby="products-title" hidden>
+        <header class="mapping-page-header">
+          <p class="eyebrow">PRODUCT MAPPING</p>
+          <h1 id="products-title">Product taxonomy</h1>
+          <p>Organize categories and keep product assignments easy to review.</p>
+        </header>
+
+        <section class="mapping-panel mapping-create-panel" aria-labelledby="category-create-title">
+          <div class="mapping-section-heading">
+            <div><p class="mapping-kicker">CATEGORY SETUP</p><h2 id="category-create-title">Create a product category</h2></div>
+            <p>Use an existing master category or enter a new one.</p>
+          </div>
+          <form id="category-form" class="mapping-create-form">
+            <label>Master category <input name="masterCategory" maxlength="80" required placeholder="e.g. Beauty & Personal Care" autocomplete="off"></label>
+            <label>Product category <input name="name" maxlength="80" required placeholder="e.g. Nail Serum" autocomplete="off"></label>
+            <button class="button button-primary" type="submit">Create category</button>
+          </form>
+          <p id="category-form-feedback" class="mapping-inline-feedback" role="alert" hidden></p>
+        </section>
+
+        <div id="category-list" class="mapping-category-grid" aria-live="polite">
+          <section class="mapping-panel mapping-category-panel" aria-labelledby="master-categories-title">
+            <div class="mapping-section-heading"><div><p class="mapping-kicker">TAXONOMY</p><h2 id="master-categories-title">Master Categories</h2></div><span id="master-category-count" class="mapping-count"></span></div>
+            <div id="master-category-list" class="category-list"></div>
+          </section>
+          <section class="mapping-panel mapping-category-panel" aria-labelledby="product-categories-title">
+            <div class="mapping-section-heading"><div><p class="mapping-kicker">TAXONOMY</p><h2 id="product-categories-title">Product Categories</h2></div><span id="product-category-count" class="mapping-count"></span></div>
+            <div id="product-category-list" class="category-list"></div>
+          </section>
         </div>
-        <p class="management-headings">Product · Category · Source · Last updated · Actions</p>
-        <div id="product-mappings" class="management-list" aria-live="polite"></div>
+
+        <section class="mapping-panel mapping-directory" aria-labelledby="product-mappings-title">
+          <div class="mapping-section-heading"><div><p class="mapping-kicker">ASSIGNMENTS</p><h2 id="product-mappings-title">Product mappings</h2></div><span id="product-mapping-count" class="mapping-count"></span></div>
+          <div class="mapping-filter-toolbar" role="search" aria-label="Filter product mappings">
+            <label class="mapping-search-field">Search products <input id="product-search" type="search" placeholder="Search product name" autocomplete="off"></label>
+            <label>Product category <select id="product-category-filter"><option value="">All categories</option></select></label>
+            <label>Source / status <select id="product-source-filter"><option value="">All sources</option></select></label>
+          </div>
+          <div id="product-mappings" class="management-list" aria-live="polite"></div>
+        </section>
       </section>
 
       <!-- Status Mapping -->
-      <section class="page" data-page-panel="statuses" aria-labelledby="statuses-title" hidden>
-        <p class="eyebrow">STATUS MAPPING</p>
-        <h1 id="statuses-title">Make every delivery status meaningful.</h1>
-        <p>Client-approved mappings take precedence over the built-in rules.</p>
-        <div class="mapping-toolbar">
-          <label>Search raw status <input id="status-search" placeholder="Search status"></label>
-        </div>
-        <p class="management-headings">Courier / raw status · Final category · Source · Last updated · Actions</p>
-        <div id="status-mappings" class="management-list" aria-live="polite"></div>
+      <section class="page mapping-page" data-page-panel="statuses" aria-labelledby="statuses-title" hidden>
+        <header class="mapping-page-header">
+          <p class="eyebrow">STATUS MAPPING</p>
+          <h1 id="statuses-title">Delivery statuses</h1>
+          <p>Review raw courier statuses and their final categories. Client overrides take precedence over system defaults.</p>
+        </header>
+        <section class="mapping-panel mapping-directory" aria-labelledby="status-mappings-title">
+          <div class="mapping-section-heading"><div><p class="mapping-kicker">CLASSIFICATION</p><h2 id="status-mappings-title">Status mappings</h2></div><span id="status-mapping-count" class="mapping-count"></span></div>
+          <div class="mapping-filter-toolbar" role="search" aria-label="Filter status mappings">
+            <label class="mapping-search-field">Search raw status <input id="status-search" type="search" placeholder="Search courier status" autocomplete="off"></label>
+            <label>Final category <select id="status-category-filter"><option value="">All categories</option></select></label>
+            <label>Source <select id="status-source-filter"><option value="">All sources</option><option value="Client Override">Client Override</option><option value="System Default">System Default</option></select></label>
+          </div>
+          <div id="status-mappings" class="management-list" aria-live="polite"></div>
+        </section>
       </section>
+
+      <div id="mapping-toast" class="mapping-toast" role="status" aria-live="polite" hidden></div>
 
       <!-- History -->
       <section class="page" data-page-panel="history" aria-labelledby="history-title" hidden>
