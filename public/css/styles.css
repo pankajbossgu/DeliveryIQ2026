@@ -61,3 +61,104 @@
 @media(max-width:760px){body{overflow-x:hidden}.universal-analysis-section,.universal-secondary-filters{padding:17px}.universal-analysis-control{grid-template-columns:repeat(2,minmax(0,1fr))}.universal-analysis-control button{min-height:44px;padding:7px 6px;white-space:normal;line-height:1.2}.universal-filter-grid{grid-template-columns:1fr;gap:13px}.date-popover{position:fixed;top:50%;left:14px;width:calc(100vw - 28px);max-height:calc(100vh - 28px);overflow-y:auto;transform:translateY(-50%)}.quick-ranges{grid-template-columns:repeat(2,minmax(0,1fr))}.date-custom{grid-template-columns:1fr}.date-range-arrow{display:none}.date-actions{display:grid;grid-template-columns:1fr 1fr}.date-actions .button-primary{grid-column:1/-1;grid-row:1}.date-actions .button-secondary{grid-row:2}.download-popover{right:0;width:min(230px,calc(100vw - 28px))}.classification-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.product-review-card{grid-template-columns:auto minmax(0,1fr);gap:8px 10px;padding:13px}.product-review-card .mapping-identity,.product-review-card>.summary-warning,.product-review-card>span,.product-review-card>select,.product-review-card>.button{grid-column:2}.product-review-card select,.product-review-card .button{width:100%}.bulk-action-toolbar{display:grid;grid-template-columns:1fr 1fr}.bulk-action-toolbar strong{grid-column:1/-1}.bulk-action-toolbar select,.bulk-action-toolbar .button{width:100%}.universal-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.universal-table-wrap{display:none}.universal-group-cards{display:grid;gap:11px;margin-top:15px}.universal-group-card{padding:16px;border:1px solid #dfe4ed;border-radius:14px}.universal-group-card dl{display:grid;grid-template-columns:1fr auto;gap:9px 16px;margin:0}.universal-group-card dd{margin:0;text-align:right}}
 @media(max-width:420px){.universal-analysis-control{grid-template-columns:1fr 1fr}.mapping-review{padding:15px}.products-heading{flex-wrap:wrap}.bulk-action-toolbar{grid-template-columns:1fr}.bulk-action-toolbar strong{grid-column:auto}}
 .date-trigger:focus-visible,.date-popover button:focus-visible,.date-popover input:focus-visible,.universal-secondary-select:focus-visible,.universal-analysis-control button:focus-visible,.payment-control button:focus-visible,.download-popover button:focus-visible,.select-all-control input:focus-visible{outline:3px solid #9daef2;outline-offset:2px}@media(prefers-reduced-motion:reduce){.universal-analysis-control button,.payment-control button{transition:none}.skeleton::after,.skeleton-cell::after{animation:none}}
+
+/* Authoritative application page isolation and responsive layout. */
+.main-content,
+.app-page,
+.page-content { min-width: 0; }
+.app-page { display: none; width: 100%; }
+.app-page.is-active { display: block; }
+.app-page[hidden] { display: none !important; }
+.workspace { width: auto; max-width: 100%; }
+
+/* Keep review workflow sections compact and wholly in normal document flow. */
+#upload-workflow { display: grid; gap: 18px; }
+#upload-workflow > * { margin-top: 0; margin-bottom: 0; }
+.mapping-review .sticky-actions { position: static; padding: 0; background: transparent; }
+.products-heading { min-width: 0; }
+.select-all-control { flex: 0 0 auto; max-width: 100%; }
+.product-review-card { grid-template-columns: auto minmax(150px, 1.1fr) minmax(145px, .8fr) minmax(155px, 1fr) auto; }
+.product-review-card > .button { min-width: 0; }
+.universal-table-wrap,
+.report-table-wrap { max-width: 100%; overflow-x: auto; }
+
+@media (max-width: 760px) {
+  body { overflow-x: hidden; }
+  .page { width: 100%; max-width: 100%; }
+  .universal-header .heading-actions { display: flex; flex-wrap: wrap; }
+  .date-popover { position: absolute; top: calc(100% + 8px); left: 0; width: min(450px, calc(100vw - 36px)); max-height: min(560px, calc(100vh - 100px)); transform: none; }
+  .products-heading { align-items: flex-start; flex-wrap: wrap; }
+  .select-all-control { min-height: 36px; }
+  .product-review-card { grid-template-columns: auto minmax(0, 1fr); }
+  .product-review-card > .product-select { grid-column: 1; grid-row: 1; }
+  .product-review-card .mapping-identity { grid-column: 2; grid-row: 1; }
+  .product-review-card > .summary-warning,
+  .product-review-card > span,
+  .product-review-card > select,
+  .product-review-card > .button { grid-column: 1 / -1; }
+  .product-review-card select,
+  .product-review-card .button { width: 100%; }
+  .bulk-action-toolbar { grid-template-columns: 1fr; }
+  .bulk-action-toolbar strong { grid-column: auto; }
+}
+
+/* Product review rows use explicit regions so content length cannot move controls. */
+.product-review-card {
+  grid-template-columns: auto minmax(160px, 1.05fr) minmax(250px, 1fr) auto;
+  align-items: start;
+}
+.product-review-card > .product-select { grid-column: 1; grid-row: 1 / span 3; padding-top: 10px; }
+.product-review-card > .mapping-identity { grid-column: 2; grid-row: 1; padding-top: 9px; }
+.product-review-toggle {
+  grid-column: 4;
+  grid-row: 1;
+  min-height: 36px;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #fff;
+  color: #44536a;
+  cursor: pointer;
+  font-size: .74rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.product-review-details {
+  grid-column: 2;
+  display: grid;
+  gap: 4px;
+  color: #68768b;
+  font-size: .74rem;
+  line-height: 1.4;
+}
+.product-review-details[hidden] { display: none; }
+.product-review-fields {
+  grid-column: 3;
+  grid-row: 1 / span 3;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.product-review-actions {
+  grid-column: 4;
+  grid-row: 2 / span 2;
+  display: grid;
+  gap: 7px;
+}
+.product-review-actions .button { width: 100%; }
+.product-review-card > .summary-ok { grid-column: 3; grid-row: 1; padding-top: 10px; }
+.product-review-card .mapping-card-error { grid-column: 2 / -1; }
+
+@media (max-width: 760px) {
+  .product-review-card { grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; }
+  .product-review-card > .product-select { grid-column: 1; grid-row: 1; padding-top: 8px; }
+  .product-review-card > .mapping-identity { grid-column: 2; grid-row: 1; padding-top: 8px; }
+  .product-review-toggle { grid-column: 3; grid-row: 1; }
+  .product-review-card > .summary-ok,
+  .product-review-details,
+  .product-review-fields,
+  .product-review-actions { grid-column: 1 / -1; grid-row: auto; }
+  .product-review-details { padding: 2px 0; }
+  .product-review-fields { grid-template-columns: 1fr; }
+  .product-review-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .product-review-actions .button:last-child { grid-column: 1 / -1; }
+}
