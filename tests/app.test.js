@@ -153,6 +153,8 @@ test('universal read APIs paginate, validate, sort, and remain scoped to the ser
     response = await authenticatedFetch(base, `/api/universal/orders/ORD-OTHER`); assert.equal(response.status, 404);
     response = await authenticatedFetch(base, `/api/universal/orders/ORD-1/history?limit=1`); body = await response.json(); assert.equal(body.occurrences[0].reportId, 'R2'); assert.equal(body.pagination.total, 2);
     response = await authenticatedFetch(base, `/api/universal/summary`); body = await response.json(); assert.deepEqual(body.summary, { totalOrders: 2, totalValue: 30, totalQuantity: 3, byStatusCategory: { Delivered: 2 }, byStatus: { Delivered: 2 } });
+    response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=product&paymentMode=COD&clientId=other-client`); body = await response.json(); assert.equal(body.report.groupLabel, 'Product'); assert.equal(body.report.totals.totalOrders, 2); assert.equal(body.report.rows.reduce((total, row) => total + row.delivered, 0), 2); assert.deepEqual(body.report.paymentModes, ['COD']);
+    response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=paymentMode`); assert.equal(response.status, 422);
     response = await authenticatedFetch(base, `/api/universal/summary?search=ORD-2&clientId=other-client`); body = await response.json(); assert.equal(body.summary.totalOrders, 1); assert.equal(body.summary.totalQuantity, 1);
     response = await authenticatedFetch(base, `/api/universal/analytics?status=Delivered&fromDate=2026-01-02&toDate=2026-01-02&reportFromDate=2026-02-01&reportToDate=2026-02-01&clientId=other-client`); body = await response.json(); assert.equal(body.analytics.summary.totalOrders, 1); assert.equal(body.analytics.statusCategories[0].percentage, 100); assert.equal(body.analytics.trends[0].date, '2026-01-02');
     response = await authenticatedFetch(base, `/api/universal/analytics?fromDate=2026-01-02&toDate=2026-01-01`); assert.equal(response.status, 422);
@@ -187,15 +189,30 @@ test('universal export limit is checked before the current-order iterator is cre
   assert.equal(result.overLimit, true); assert.equal(result.total, 2); assert.equal(result.orders, undefined);
 });
 
-test('Universal Report frontend consumes the read-only current-state and history APIs', () => {
+test('Universal Report frontend uses the grouped business report without legacy search controls', () => {
   const fs = require('node:fs');
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(html, /data-page="universal"/); assert.match(html, /id="universal-filters"/); assert.match(html, /CURRENT ORDER STATE/);
-  assert.match(script, /\/api\/universal\/summary/); assert.match(script, /\/api\/universal\/orders\?/); assert.match(script, /\/history\?limit=25/);
-  assert.match(script, /HISTORICAL OBSERVATIONS/);
+  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /Category Status/); assert.match(html, /data-payment="COD"/); assert.match(html, /Last 30 Days/); assert.match(html, /Summary Report/);
+  assert.doesNotMatch(html, /Search order ID|Latest status|name="statusCategory"/);
+  assert.match(script, /\/api\/universal\/grouped/); assert.doesNotMatch(script, /form\.elements\.search/);
 });
 
+
+test('universal grouped report uses normalized dimensions, tenant scope, and payment mode filtering', async () => {
+  const store = new UniversalStore({ mongoUri: null });
+  await store.syncCompletedReport('a', universalReport('a', 'G1', '2026-02-01T00:00:00Z'), [
+    { ...universalRow('ONE', '2026-01-01', 'Widget', 2), normalizedProductName: 'widget', courier: 'Delhivery', paymentMode: 'COD' },
+    { ...universalRow('TWO', '2026-01-02', ' widget ', 1), normalizedProductName: 'widget', courier: 'delhivery', paymentMode: 'Prepaid', category: 'RTO', originalStatus: 'Returned' }
+  ]);
+  await store.syncCompletedReport('b', universalReport('b', 'G2', '2026-02-01T00:00:00Z'), [universalRow('PRIVATE')]);
+  const products = await store.groupedReport('a', { analyzeBy: 'product' });
+  assert.equal(products.groupLabel, 'Product'); assert.deepEqual(products.range, { from: '2026-01-01', to: '2026-01-02' }); assert.equal(products.rows.length, 1); assert.equal(products.rows[0].totalOrders, 2); assert.equal(products.rows[0].delivered, 1); assert.equal(products.rows[0].rto, 1); assert.equal(products.totals.totalOrders, 2);
+  const courier = await store.groupedReport('a', { analyzeBy: 'courier' });
+  assert.equal(courier.rows.length, 1); assert.equal(courier.rows[0].totalOrders, 2);
+  const filtered = await store.groupedReport('a', { analyzeBy: 'category_status', paymentMode: 'COD' });
+  assert.equal(filtered.totals.totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'Delivered').totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'RTO').totalOrders, 0);
+});
 test('universal analytics are tenant-scoped, filter-aware, and preserve product-line quantities', async () => {
   const store = new UniversalStore({ mongoUri: null });
   await store.syncCompletedReport('a', universalReport('a', 'A1', '2026-02-01T00:00:00Z'), [

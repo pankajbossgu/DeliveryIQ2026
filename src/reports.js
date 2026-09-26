@@ -70,11 +70,11 @@ function escapeRegex(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g
 function dateRange(from, to) { const range = {}; if (from) range.$gte = from; if (to) range.$lte = to; return range; }
 function universalSort(sortBy, direction, defaultField) { const field = sortBy || defaultField; const value = direction === 'asc' ? 1 : -1; return field === 'canonicalOrderId' ? { canonicalOrderId: value } : { [field]: value, canonicalOrderId: 1 }; }
 function memorySort(sort) { const entries = Object.entries(sort); return (left, right) => { for (const [field, direction] of entries) { const a = left[field] instanceof Date ? left[field].getTime() : left[field]; const b = right[field] instanceof Date ? right[field].getTime() : right[field]; if (a === b) continue; if (a === undefined || a === null) return -direction; if (b === undefined || b === null) return direction; return a > b ? direction : -direction; } return 0; }; }
-function matchesUniversal(item, filters) { const completed = item.latestReportCompletedAt || item.reportCompletedAt; return (!filters.search || item.canonicalOrderId.toLowerCase().startsWith(filters.search.toLowerCase())) && (!filters.status || item.originalStatus === filters.status) && (!filters.statusCategory || item.statusCategory === filters.statusCategory) && (!filters.fromDate || item.orderDate >= filters.fromDate) && (!filters.toDate || item.orderDate <= filters.toDate) && (!filters.reportFromDate || new Date(completed) >= new Date(filters.reportFromDate)) && (!filters.reportToDate || new Date(completed) <= new Date(filters.reportToDate)); }
+function matchesUniversal(item, filters) { const completed = item.latestReportCompletedAt || item.reportCompletedAt; return (!filters.search || item.canonicalOrderId.toLowerCase().startsWith(filters.search.toLowerCase())) && (!filters.status || item.originalStatus === filters.status) && (!filters.statusCategory || item.statusCategory === filters.statusCategory) && (!filters.paymentMode || item.paymentMode === filters.paymentMode) && (!filters.fromDate || item.orderDate >= filters.fromDate) && (!filters.toDate || item.orderDate <= filters.toDate) && (!filters.reportFromDate || new Date(completed) >= new Date(filters.reportFromDate)) && (!filters.reportToDate || new Date(completed) <= new Date(filters.reportToDate)); }
 function buckets(items, field) { return Object.fromEntries(items.filter((item) => item._id).map((item) => [item._id, item.count])); }
 function summaryFromBuckets(summary) { const total = summary.totals?.[0] || {}; return { totalOrders: total.totalOrders || 0, totalValue: Number((total.totalValue || 0).toFixed(2)), totalQuantity: total.totalQuantity || 0, byStatusCategory: buckets(summary.byStatusCategory || []), byStatus: buckets(summary.byStatus || []) }; }
 function summaryFromOrders(orders) { const group = (field) => orders.reduce((result, order) => { if (order[field]) result[order[field]] = (result[order[field]] || 0) + 1; return result; }, {}); return { totalOrders: orders.length, totalValue: Number(orders.reduce((total, order) => total + (order.totalValue || 0), 0).toFixed(2)), totalQuantity: orders.reduce((total, order) => total + (order.totalQuantity || 0), 0), byStatusCategory: group('statusCategory'), byStatus: group('originalStatus') }; }
-function universalFilter(clientId, { search, status, statusCategory, fromDate, toDate, reportFromDate, reportToDate } = {}) { const filter = { clientId }; if (search) filter.canonicalOrderId = { $regex: `^${escapeRegex(search)}`, $options: 'i' }; if (status) filter.originalStatus = status; if (statusCategory) filter.statusCategory = statusCategory; if (fromDate || toDate) filter.orderDate = dateRange(fromDate, toDate); if (reportFromDate || reportToDate) filter.latestReportCompletedAt = dateRange(reportFromDate, reportToDate); return filter; }
+function universalFilter(clientId, { search, status, statusCategory, paymentMode, fromDate, toDate, reportFromDate, reportToDate } = {}) { const filter = { clientId }; if (search) filter.canonicalOrderId = { $regex: `^${escapeRegex(search)}`, $options: 'i' }; if (status) filter.originalStatus = status; if (statusCategory) filter.statusCategory = statusCategory; if (paymentMode) filter.paymentMode = paymentMode; if (fromDate || toDate) filter.orderDate = dateRange(fromDate, toDate); if (reportFromDate || reportToDate) filter.latestReportCompletedAt = dateRange(reportFromDate, reportToDate); return filter; }
 function analyticsFromOrders(orders) { const summary = summaryFromOrders(orders); const total = summary.totalOrders; const grouped = (field) => Object.entries(summary[field] || {}).map(([name, count]) => ({ name, count, percentage: percent(count, total) })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)); const trendMap = new Map(); const productMap = new Map(); orders.forEach((order) => { if (order.orderDate) { const item = trendMap.get(order.orderDate) || { date: order.orderDate, count: 0, value: 0 }; item.count += 1; item.value += Number(order.totalValue || 0); trendMap.set(order.orderDate, item); } (order.products || []).forEach((line) => { const name = line.originalProductName || line.normalizedProductName || 'Unmapped product'; const item = productMap.get(name) || { name, quantity: 0, value: 0, orderIds: new Set() }; item.quantity += Number(line.quantity || 0); item.value += Number(line.rowValue || 0); item.orderIds.add(order.canonicalOrderId); productMap.set(name, item); }); }); const products = [...productMap.values()].map((item) => ({ name: item.name, quantity: item.quantity, value: Number(item.value.toFixed(2)), orderCount: item.orderIds.size })).sort((a, b) => b.quantity - a.quantity || b.value - a.value || a.name.localeCompare(b.name)).slice(0, 10); const rto = (summary.byStatusCategory.RTO || 0); return { summary: { ...summary, rtoOrders: rto, rtoPercentage: percent(rto, total), rtoValue: Number(orders.filter((order) => order.statusCategory === 'RTO').reduce((sum, order) => sum + Number(order.totalValue || 0), 0).toFixed(2)) }, statusCategories: grouped('byStatusCategory'), statuses: grouped('byStatus'), trends: [...trendMap.values()].map((item) => ({ ...item, value: Number(item.value.toFixed(2)) })).sort((a, b) => a.date.localeCompare(b.date)), products, attention: rto ? [{ type: 'RTO', count: rto, percentage: percent(rto, total), value: Number(orders.filter((order) => order.statusCategory === 'RTO').reduce((sum, order) => sum + Number(order.totalValue || 0), 0).toFixed(2)) }] : [] }; }
 class UniversalStore {
   constructor({ mongoUri = process.env.MONGODB_URI } = {}) { this.mongoUri = mongoUri; this.connection = null; this.orders = new Map(); this.occurrences = new Map(); this.syncs = new Map(); }
@@ -83,15 +83,15 @@ class UniversalStore {
   // These read methods are deliberately the only public Universal API surface. Filters
   // are built by the HTTP layer from an allow-list; every database predicate starts
   // with the server-resolved clientId.
-  async listOrders(clientId, { page, limit, search, status, statusCategory, fromDate, toDate, reportFromDate, reportToDate, sortBy, sortDirection }) {
-    const filter = universalFilter(clientId, { search, status, statusCategory, fromDate, toDate, reportFromDate, reportToDate });
+  async listOrders(clientId, { page, limit, search, status, statusCategory, paymentMode, fromDate, toDate, reportFromDate, reportToDate, sortBy, sortDirection }) {
+    const filter = universalFilter(clientId, { search, status, statusCategory, paymentMode, fromDate, toDate, reportFromDate, reportToDate });
     const sort = universalSort(sortBy, sortDirection, 'latestReportCompletedAt');
     if (await this.database()) {
       const listProjection = { clientId: 0, products: 0, paymentMode: 0, courier: 0, orderSource: 0 };
       const [orders, total] = await Promise.all([UniversalOrder.find(filter, listProjection).sort(sort).skip((page - 1) * limit).limit(limit).lean(), UniversalOrder.countDocuments(filter)]);
       return { orders, total };
     }
-    const orders = [...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, { search, status, statusCategory, fromDate, toDate, reportFromDate, reportToDate })).sort(memorySort(sort));
+    const orders = [...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, { search, status, statusCategory, paymentMode, fromDate, toDate, reportFromDate, reportToDate })).sort(memorySort(sort));
     return { orders: orders.slice((page - 1) * limit, page * limit), total: orders.length };
   }
   async exportCurrentOrders(clientId, filters, { maxOrders = 50000 } = {}) {
@@ -152,6 +152,49 @@ class UniversalStore {
       return { summary, statusCategories: breakdown(result?.statusCategories), statuses: breakdown(result?.statuses), trends: (result?.trends || []).map((item) => ({ date: item._id, count: item.count, value: Number((item.value || 0).toFixed(2)) })), products: (result?.products || []).map((item) => ({ name: item._id || 'Unmapped product', quantity: item.quantity || 0, value: Number((item.value || 0).toFixed(2)), orderCount: item.orderCount || 0 })), attention: total.rtoOrders ? [{ type: 'RTO', count: total.rtoOrders, percentage: percent(total.rtoOrders, totalOrders), value: Number((total.rtoValue || 0).toFixed(2)) }] : [] };
     }
     return analyticsFromOrders([...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, filters)));
+  }
+  async groupedReport(clientId, filters = {}) {
+    const analyzeBy = filters.analyzeBy || 'product';
+    const labels = { product: 'Product', product_category: 'Product Category', courier: 'Courier', category_status: 'Status Category' };
+    if (!labels[analyzeBy]) throw new Error('Invalid Universal Report view.');
+    const filter = universalFilter(clientId, filters);
+    const database = await this.database();
+    const orders = await (database ? UniversalOrder.find(filter).lean() : [...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, filters)));
+    const paymentModes = database ? await UniversalOrder.distinct('paymentMode', { clientId, paymentMode: { $type: 'string', $ne: '' } }) : [...new Set([...this.orders.values()].filter((order) => order.clientId === clientId && order.paymentMode).map((order) => order.paymentMode))];
+    const emptyCounts = () => Object.fromEntries(CATEGORIES.map((category) => [category, 0]));
+    const groups = new Map();
+    const add = (key, name, order, value) => {
+      const item = groups.get(key) || { name, totalOrders: 0, delivered: 0, inTransit: 0, ndr: 0, rto: 0, cancelled: 0, other: 0, totalOrderValue: 0, deliveredOrderValue: 0, _orders: new Set() };
+      if (!item._orders.has(order.canonicalOrderId)) {
+        item._orders.add(order.canonicalOrderId); item.totalOrders += 1;
+        const category = order.statusCategory && CATEGORIES.includes(order.statusCategory) ? order.statusCategory : 'Other';
+        const field = { Delivered: 'delivered', 'In Transit': 'inTransit', NDR: 'ndr', RTO: 'rto', Cancelled: 'cancelled', Other: 'other' }[category]; item[field] += 1;
+      }
+      item.totalOrderValue += Number(value || 0);
+      if (order.statusCategory === 'Delivered') item.deliveredOrderValue += Number(value || 0);
+      groups.set(key, item);
+    };
+    for (const order of orders) {
+      if (analyzeBy === 'product' || analyzeBy === 'product_category') {
+        for (const line of order.products || []) {
+          const raw = analyzeBy === 'product' ? (line.normalizedProductName || line.originalProductName) : line.productCategory;
+          const display = analyzeBy === 'product' ? (line.originalProductName || line.normalizedProductName) : line.productCategory;
+          const name = String(display || 'Unmapped').trim() || 'Unmapped'; const key = String(raw || 'unmapped').trim().toLowerCase() || 'unmapped';
+          add(key, name, order, line.rowValue);
+        }
+      } else if (analyzeBy === 'courier') {
+        const name = String(order.courier || 'Unmapped courier').trim() || 'Unmapped courier'; add(name.toLowerCase(), name, order, order.totalValue);
+      } else {
+        const name = CATEGORIES.includes(order.statusCategory) ? order.statusCategory : 'Other'; add(name, name, order, order.totalValue);
+      }
+    }
+    if (analyzeBy === 'category_status') for (const category of CATEGORIES) if (!groups.has(category)) groups.set(category, { name: category, totalOrders: 0, delivered: 0, inTransit: 0, ndr: 0, rto: 0, cancelled: 0, other: 0, totalOrderValue: 0, deliveredOrderValue: 0, _orders: new Set() });
+    const rows = [...groups.values()].map(({ _orders, ...row }) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'number' ? Number(value.toFixed(2)) : value]))).sort((a, b) => b.totalOrders - a.totalOrders || a.name.localeCompare(b.name));
+    const totals = summaryFromOrders(orders);
+    totals.deliveredOrders = totals.byStatusCategory.Delivered || 0; totals.inTransitOrders = totals.byStatusCategory['In Transit'] || 0; totals.ndrOrders = totals.byStatusCategory.NDR || 0; totals.rtoOrders = totals.byStatusCategory.RTO || 0; totals.cancelledOrders = totals.byStatusCategory.Cancelled || 0; totals.otherOrders = totals.byStatusCategory.Other || 0;
+    totals.deliveredOrderValue = Number(orders.filter((order) => order.statusCategory === 'Delivered').reduce((sum, order) => sum + Number(order.totalValue || 0), 0).toFixed(2));
+    const dates = orders.map((order) => order.orderDate).filter(Boolean).sort();
+    return { analyzeBy, groupLabel: labels[analyzeBy], rows, totals, paymentModes: paymentModes.sort((a, b) => String(a).localeCompare(String(b))), range: { from: dates[0] || null, to: dates.at(-1) || null } };
   }
   async markFailed(clientId, reportId) {
     const error = 'Universal report synchronization could not be completed.';
