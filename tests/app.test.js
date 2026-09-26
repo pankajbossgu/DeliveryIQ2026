@@ -238,9 +238,10 @@ test('Report Review frontend uses accessible custom dialogs and selection-based 
   assert.doesNotMatch(script, /(?:window\.)?(?:alert|confirm|prompt)\s*\(/);
   assert.match(script, /function openCategoryModal\(/);
   assert.match(script, /aria-modal/);
-  assert.match(script, /selectAll\.indeterminate/);
-  assert.match(script, /function bulkProductAction\(/);
-  assert.match(script, /Reject suggestion/);
+  assert.match(script, /handleProductSelectionChange/);
+  assert.match(script, /handleStatusSelectionChange/);
+  assert.match(script, /submitBulkProductUpdate/);
+  assert.match(script, /submitBulkStatusUpdate/);
   assert.doesNotMatch(script, /Approve All AI Suggestions/);
 });
 
@@ -292,12 +293,10 @@ test('Upload Data restoration has dedicated lifecycle states and does not reuse 
   assert.match(script, /Cancel this report\?/);
   assert.match(script, /Cancelling report\.\.\./);
   assert.match(script, /Keep Processing/);
-  assert.match(script, /Category required/);
-  assert.match(script, /Assign Category/);
-  assert.match(script, /Create new category/);
+  assert.match(script, /openManualCategoryModal/);
   assert.match(script, /Select All/);
-  assert.match(script, /Apply to Selected/);
-  assert.match(script, /Updating \$\{selected\.length\} status mappings/);
+  assert.match(script, /Updating statuses…/);
+  assert.match(script, /Updating products…/);
   assert.match(script, /statusErrors/);
   assert.match(script, /progress\.textContent = 'Cancelling report\.\.\.'/);
   const server = fs.readFileSync(require('node:path').join(__dirname, '..', 'src', 'app.js'), 'utf8');
@@ -343,8 +342,8 @@ test('Report review bulk updates are server-authoritative and completion directs
   assert.match(appSource, /review\/:kind\/bulk/);
   assert.match(appSource, /Select between 1 and 200 unique values to update/);
   assert.match(script, /function saveBulkReviewDecision/);
-  assert.match(script, /function bulkProductMapping/);
-  assert.match(script, /Apply category/);
+  assert.match(script, /function submitBulkProductUpdate/);
+  assert.match(script, /data-product-category/);
   assert.match(script, /function renderCompletion/);
   assert.match(script, /Open Universal Report/);
 });
