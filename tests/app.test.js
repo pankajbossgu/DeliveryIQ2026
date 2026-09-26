@@ -182,7 +182,7 @@ test('universal CSV export streams only filtered current tenant orders and prese
     response = await authenticatedFetch(base, `/api/universal/export?search[$regex]=SAFE`); assert.equal(response.status, 422);
     response = await authenticatedFetch(base, `/api/universal/export?statusCategory=Cancelled`); assert.equal(response.status, 200); assert.match(await response.text(), /Order ID/);
     response = await authenticatedFetch(base, `/api/universal/export?fromDate=2026-01-01&toDate=2026-01-01&exportType=full&format=xlsx`); assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /spreadsheetml/); assert.deepEqual([...new Uint8Array(await response.arrayBuffer()).slice(0, 2)], [80, 75]);
-    response = await authenticatedFetch(base, `/api/universal/export?fromDate=2026-01-02&toDate=2026-01-02&analyzeBy=product&deliveryView=shipped_orders&exportType=summary&format=csv`); const summaryCsv = await response.text(); assert.equal(response.status, 200); assert.match(summaryCsv, /"Delivery % View","Shipped Orders"/); assert.match(summaryCsv, /"Normal","1","0","0","0","0","0","1","100"/);
+    response = await authenticatedFetch(base, `/api/universal/export?fromDate=2026-01-02&toDate=2026-01-02&analyzeBy=product&deliveryView=shipped_orders&exportType=summary&format=csv`); const summaryCsv = await response.text(); assert.equal(response.status, 200); assert.match(summaryCsv, /"Report Basis","Shipped Orders"/); assert.match(summaryCsv, /"Normal","1","0","0","0","0","0","1","100"/);
     response = await authenticatedFetch(base, `/api/universal/export?fromDate=2026-01-02&toDate=2026-01-02&analyzeBy=product&deliveryView=shipped_orders&exportType=summary&format=xlsx`); assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /spreadsheetml/); assert.deepEqual([...new Uint8Array(await response.arrayBuffer()).slice(0, 2)], [80, 75]);
   } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
 });
@@ -198,7 +198,7 @@ test('Universal Report frontend uses the grouped business report without legacy 
   const fs = require('node:fs');
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /Delivery % View/); assert.match(html, /All Orders/); assert.match(html, /Shipped Orders/); assert.match(html, /name="deliveryView" value="all_orders"/); assert.match(html, /data-payment="COD"/); assert.match(html, /Last 30 Days/); assert.match(html, /Summary Report/);
+  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /REPORT BASIS/); assert.match(html, /All Orders/); assert.match(html, /Shipped Orders/); assert.match(html, /name="deliveryView" value="all_orders"/); assert.match(html, /data-payment="COD"/); assert.match(html, /Last 30 Days/); assert.match(html, /Summary Report/);
   assert.doesNotMatch(html, /Search order ID|Latest status|Category Status|name="categoryStatus"/);
   assert.match(script, /\/api\/universal\/grouped/); assert.match(script, /data-delivery-view/); assert.match(script, /\['Delivery %', 'deliveryPercentage'\]/); assert.doesNotMatch(script, /form\.elements\.search/);
 });
@@ -218,25 +218,88 @@ test('universal grouped report uses normalized dimensions, tenant scope, and pay
   const filtered = await store.groupedReport('a', { analyzeBy: 'category_status', paymentMode: 'COD' });
   assert.equal(filtered.totals.totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'Delivered').totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'Delivered').deliveryPercentage, 100); assert.equal(filtered.rows.find((row) => row.name === 'RTO').totalOrders, 0); assert.equal(filtered.rows.find((row) => row.name === 'RTO').deliveryPercentage, 0);
 });
-test('grouped Delivery % uses each row denominator for every supported dimension and mode', async () => {
+test('report basis applies to summary and each group without changing counts or values', async () => {
   const store = new UniversalStore({ mongoUri: null });
-  await store.syncCompletedReport('a', universalReport('a', 'DV-1', '2026-02-01T00:00:00Z'), [
-    { ...universalRow('P-DEL', '2026-01-01', 'Alpha'), productCategory: 'A', courier: 'North' },
-    { ...universalRow('P-NDR', '2026-01-01', 'Alpha'), category: 'NDR', originalStatus: 'Address issue', productCategory: 'A', courier: 'North' },
-    { ...universalRow('P-RTO', '2026-01-01', 'Beta'), category: 'RTO', originalStatus: 'Returned', productCategory: 'B', courier: 'South' },
-    { ...universalRow('P-CANCEL', '2026-01-01', 'Beta'), category: 'Cancelled', originalStatus: 'Cancelled', productCategory: 'B', courier: 'South' },
-    { ...universalRow('P-ZERO', '2026-01-01', 'Gamma'), category: 'Cancelled', originalStatus: 'Cancelled', productCategory: 'C', courier: 'Zero' }
-  ]);
-  for (const analyzeBy of ['product', 'product_category', 'courier']) {
+  const rows = [
+    ['A1', 'Alpha', 'Delivered'], ['A2', 'Alpha', 'Delivered'], ['A3', 'Alpha', 'NDR'],
+    ['A4', 'Alpha', 'RTO'], ['A5', 'Alpha', 'In Transit'], ['A6', 'Alpha', 'Cancelled'],
+    ['A7', 'Alpha', 'Other'], ['B1', 'Beta', 'Delivered'], ['B2', 'Beta', 'RTO'],
+    ['B3', 'Beta', 'Cancelled'], ['C1', 'Gamma', 'In Transit']
+  ].map(([id, product, category]) => ({ ...universalRow(id, '2026-01-01', product), category, originalStatus: category, productCategory: product, courier: product }));
+  // Duplicate product lines must not multiply order counts or the shipped denominator.
+  await store.syncCompletedReport('a', universalReport('a', 'BASIS', '2026-02-01T00:00:00Z'), [...rows, rows[0]]);
+  for (const analyzeBy of ['product', 'product_category', 'courier', 'category_status']) {
     const all = await store.groupedReport('a', { analyzeBy });
     const shipped = await store.groupedReport('a', { analyzeBy, deliveryView: 'shipped_orders' });
-    const alpha = all.rows.find((row) => row.name === (analyzeBy === 'courier' ? 'North' : analyzeBy === 'product_category' ? 'A' : 'Alpha'));
-    const beta = shipped.rows.find((row) => row.name === (analyzeBy === 'courier' ? 'South' : analyzeBy === 'product_category' ? 'B' : 'Beta'));
-    const zero = shipped.rows.find((row) => row.name === (analyzeBy === 'courier' ? 'Zero' : analyzeBy === 'product_category' ? 'C' : 'Gamma'));
-    assert.equal(alpha.deliveryPercentage, 50); assert.equal(beta.deliveryPercentage, 0); assert.equal(zero.deliveryPercentage, 0);
-    assert.equal(shipped.rows.find((row) => row.name === alpha.name).deliveryPercentage, 50);
-    assert.equal(shipped.totals.deliveryPercentage, 33.33); assert.equal(shipped.deliveryView, 'shipped_orders');
+    assert.equal(all.deliveryView, 'all_orders');
+    assert.equal(all.orderTotalLabel, 'Total Orders');
+    assert.equal(shipped.orderTotalLabel, 'Shipped Orders');
+    assert.equal(all.totals.orderTotal, 11);
+    assert.equal(shipped.totals.orderTotal, 6);
+    assert.equal(shipped.totals.totalOrders, 11);
+    assert.equal(shipped.totals.shippedOrders, 6);
+    assert.equal(all.totals.deliveryPercentage, 27.27);
+    assert.equal(shipped.totals.deliveryPercentage, 50);
+    assert.deepEqual(all.totals.percentages, { Delivered: 27.27, 'In Transit': 18.18, NDR: 9.09, RTO: 18.18, Cancelled: 18.18, Other: 9.09 });
+    assert.deepEqual(shipped.totals.percentages, { Delivered: 50, 'In Transit': null, NDR: 16.67, RTO: 33.33, Cancelled: null, Other: null });
+    assert.deepEqual(shipped.totals.byStatusCategory, all.totals.byStatusCategory);
+    assert.equal(shipped.totals.totalValue, all.totals.totalValue);
+    for (const row of shipped.rows) {
+      const original = all.rows.find((item) => item.name === row.name);
+      for (const field of ['totalOrders', 'delivered', 'ndr', 'rto', 'inTransit', 'cancelled', 'other', 'totalOrderValue', 'deliveredOrderValue']) assert.equal(row[field], original[field]);
+      assert.equal(row.orderTotal, row.delivered + row.ndr + row.rto);
+      assert.equal(row.percentages['In Transit'], null);
+      assert.equal(row.percentages.Cancelled, null);
+      assert.equal(row.percentages.Other, null);
+    }
+    if (analyzeBy !== 'category_status') {
+      const alpha = shipped.rows.find((row) => row.name === 'Alpha');
+      const beta = shipped.rows.find((row) => row.name === 'Beta');
+      const zero = shipped.rows.find((row) => row.name === 'Gamma');
+      assert.equal(all.rows.find((row) => row.name === 'Alpha').deliveryPercentage, 28.57);
+      assert.equal(alpha.orderTotal, 4); assert.equal(alpha.deliveryPercentage, 50);
+      assert.equal(alpha.percentages.NDR, 25); assert.equal(alpha.percentages.RTO, 25);
+      assert.equal(beta.orderTotal, 2); assert.equal(beta.deliveryPercentage, 50); assert.equal(beta.percentages.RTO, 50);
+      assert.equal(zero.orderTotal, 0); assert.equal(zero.deliveryPercentage, 0); assert.equal(zero.inTransit, 1);
+    }
   }
+  for (const deliveryView of ['all_orders', 'shipped_orders']) {
+    const empty = await store.groupedReport('a', { deliveryView, fromDate: '2026-02-01' });
+    assert.equal(empty.totals.orderTotal, 0); assert.equal(empty.totals.deliveryPercentage, 0); assert.deepEqual(empty.rows, []);
+    const excluded = await store.groupedReport('a', { deliveryView, statusCategory: 'Cancelled' });
+    assert.equal(excluded.totals.cancelledOrders, 2);
+    assert.equal(excluded.totals.orderTotal, deliveryView === 'all_orders' ? 2 : 0);
+    assert.equal(excluded.totals.deliveryPercentage, 0);
+  }
+});
+
+test('summary CSV and XLSX exports use the selected basis with mixed status groups', async () => {
+  const app = require('../src/app'); const previousStore = app.locals.universalStore;
+  const store = new UniversalStore({ mongoUri: null }); app.locals.universalStore = store;
+  await store.syncCompletedReport(app.locals.clientId, universalReport(app.locals.clientId, 'BASIS-EXPORT', '2026-02-01T00:00:00Z'),
+    ['Delivered', 'NDR', 'In Transit', 'Cancelled', 'Other'].map((category, index) => ({ ...universalRow(`EXPORT-${index}`, '2026-01-01', 'Mixed'), category, originalStatus: category })));
+  const server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)); }); const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    for (const [basis, label, total, percentage] of [['all_orders', 'Total Orders', 5, 20], ['shipped_orders', 'Shipped Orders', 2, 50]]) {
+      const query = `analyzeBy=product&deliveryView=${basis}&exportType=summary`;
+      let response = await authenticatedFetch(base, `/api/universal/export?${query}&format=csv`);
+      assert.equal(response.status, 200);
+      const csv = await response.text();
+      assert.ok(csv.includes(`"${label}","Delivery %"`));
+      assert.ok(csv.includes(`"Mixed","1","1","1","0","1","1","${total}","${percentage}"`));
+      response = await authenticatedFetch(base, `/api/universal/export?${query}&format=xlsx`);
+      assert.equal(response.status, 200);
+      // The workbook writer stores XML without compression. Inspect actual cells, not just the ZIP signature.
+      const workbook = Buffer.from(await response.arrayBuffer()).toString();
+      assert.ok(workbook.includes('<t>Report Basis</t>'));
+      assert.ok(workbook.includes(`<t>${label}</t>`));
+      assert.ok(workbook.includes(`<c r="H3"><v>${total}</v></c><c r="I3"><v>${percentage}</v></c>`));
+    }
+    const response = await authenticatedFetch(base, '/api/universal/export?analyzeBy=product&deliveryView=shipped_orders&exportType=full&format=csv&sortBy=canonicalOrderId&sortDirection=asc');
+    assert.equal(response.status, 200);
+    const full = await response.text();
+    for (let index = 0; index < 5; index += 1) assert.ok(full.includes(`EXPORT-${index}`));
+  } finally { await new Promise((resolve) => server.close(resolve)); app.locals.universalStore = previousStore; }
 });
 
 test('universal analytics are tenant-scoped, filter-aware, and preserve product-line quantities', async () => {

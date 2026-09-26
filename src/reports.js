@@ -156,7 +156,7 @@ class UniversalStore {
   async groupedReport(clientId, filters = {}) {
     const analyzeBy = filters.analyzeBy || 'product';
     const deliveryView = filters.deliveryView || 'all_orders';
-    if (!['all_orders', 'shipped_orders'].includes(deliveryView)) throw new Error('Invalid Delivery % view.');
+    if (!['all_orders', 'shipped_orders'].includes(deliveryView)) throw new Error('Invalid report basis.');
     const labels = { product: 'Product', product_category: 'Product Category', courier: 'Courier', category_status: 'Status Category' };
     if (!labels[analyzeBy]) throw new Error('Invalid Universal Report view.');
     const filter = universalFilter(clientId, filters);
@@ -191,17 +191,28 @@ class UniversalStore {
       }
     }
     if (analyzeBy === 'category_status') for (const category of CATEGORIES) if (!groups.has(category)) groups.set(category, { name: category, totalOrders: 0, delivered: 0, inTransit: 0, ndr: 0, rto: 0, cancelled: 0, other: 0, totalOrderValue: 0, deliveredOrderValue: 0, _orders: new Set() });
-    const deliveryPercentage = (row) => { const denominator = deliveryView === 'shipped_orders' ? row.delivered + row.ndr + row.rto : row.totalOrders; return denominator ? Number((row.delivered * 100 / denominator).toFixed(2)) : 0; };
+    const shippedBasis = deliveryView === 'shipped_orders';
+    const orderTotalLabel = shippedBasis ? 'Shipped Orders' : 'Total Orders';
+    // Apply the same basis to a group and the report summary; counts stay intact.
+    const basisMetrics = (totalOrders, counts) => {
+      const shippedOrders = counts.Delivered + counts.NDR + counts.RTO;
+      const orderTotal = shippedBasis ? shippedOrders : totalOrders;
+      const percentages = Object.fromEntries(CATEGORIES.map((category) => [category,
+        shippedBasis && !['Delivered', 'NDR', 'RTO'].includes(category) ? null : percent(counts[category], orderTotal)
+      ]));
+      return { shippedOrders, orderTotal, orderTotalLabel, percentages, deliveryPercentage: percentages.Delivered };
+    };
     const rows = [...groups.values()].map(({ _orders, ...row }) => ({
       ...Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'number' ? Number(value.toFixed(2)) : value])),
-      deliveryPercentage: deliveryPercentage(row)
+      ...basisMetrics(row.totalOrders, { Delivered: row.delivered, 'In Transit': row.inTransit, NDR: row.ndr, RTO: row.rto, Cancelled: row.cancelled, Other: row.other })
     })).sort((a, b) => b.totalOrders - a.totalOrders || a.name.localeCompare(b.name));
     const totals = summaryFromOrders(orders);
     totals.deliveredOrders = totals.byStatusCategory.Delivered || 0; totals.inTransitOrders = totals.byStatusCategory['In Transit'] || 0; totals.ndrOrders = totals.byStatusCategory.NDR || 0; totals.rtoOrders = totals.byStatusCategory.RTO || 0; totals.cancelledOrders = totals.byStatusCategory.Cancelled || 0; totals.otherOrders = totals.byStatusCategory.Other || 0;
     totals.deliveredOrderValue = Number(orders.filter((order) => order.statusCategory === 'Delivered').reduce((sum, order) => sum + Number(order.totalValue || 0), 0).toFixed(2));
-    totals.deliveryView = deliveryView; totals.deliveryPercentage = deliveryPercentage({ totalOrders: totals.totalOrders, delivered: totals.deliveredOrders, ndr: totals.ndrOrders, rto: totals.rtoOrders });
+    totals.deliveryView = deliveryView;
+    Object.assign(totals, basisMetrics(totals.totalOrders, { ...emptyCounts(), ...totals.byStatusCategory }));
     const dates = orders.map((order) => order.orderDate).filter(Boolean).sort();
-    return { analyzeBy, deliveryView, groupLabel: labels[analyzeBy], rows, totals, paymentModes: paymentModes.sort((a, b) => String(a).localeCompare(String(b))), range: { from: dates[0] || null, to: dates.at(-1) || null } };
+    return { analyzeBy, deliveryView, orderTotalLabel, groupLabel: labels[analyzeBy], rows, totals, paymentModes: paymentModes.sort((a, b) => String(a).localeCompare(String(b))), range: { from: dates[0] || null, to: dates.at(-1) || null } };
   }
   async markFailed(clientId, reportId) {
     const error = 'Universal report synchronization could not be completed.';

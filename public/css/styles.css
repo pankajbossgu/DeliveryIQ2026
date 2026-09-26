@@ -1893,6 +1893,16 @@ button:disabled {
   box-shadow: 0 3px 8px rgba(31, 47, 73, 0.08);
 }
 
+.universal-analysis-control.universal-basis-control {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 320px;
+  gap: 4px;
+}
+
+.universal-basis-control button {
+  padding-inline: 6px;
+}
+
 .universal-filter-grid {
   display: grid;
   grid-template-columns: minmax(270px, 1.4fr) minmax(220px, 0.9fr) minmax(210px, 0.9fr);
@@ -2935,6 +2945,14 @@ body.modal-open { overflow: hidden; }
 }
 
 @media (max-width: 760px) {
+  .sidebar {
+    display: none;
+  }
+
+  .workspace {
+    margin-left: 0;
+  }
+
   .page {
     width: 100%;
     max-width: 100%;
