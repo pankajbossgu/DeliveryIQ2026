@@ -240,12 +240,17 @@ test('Upload Data restoration has dedicated lifecycle states and does not reuse 
   assert.match(script, /state\.validating/);
   assert.match(script, /if \(state\.restoring \|\| state\.validating/);
   assert.match(script, /refreshConfig\(\)\.catch\(\(\) => \{\}\)/);
-  assert.match(script, /clearNotice\(\); setUploadLocked\(null\); if \(!\/\\\.\(csv\|xlsx\)/);
+  assert.match(script, /function resetSelectedFile\(/);
+  assert.match(script, /Unsupported file type/);
+  assert.match(script, /Maximum supported size: 10 MB/);
+  assert.match(script, /Checking your file…/);
   const server = fs.readFileSync(require('node:path').join(__dirname, '..', 'src', 'app.js'), 'utf8');
   assert.match(server, /function activeProcessUploadMessage\(/);
   assert.ok(server.indexOf('const active = await processingStore.getActiveProcess(clientId);') < server.indexOf('const result = validateUpload'));
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   assert.match(html, /id="file-upload" type="file" accept="\.csv,\.xlsx" hidden disabled/);
+  assert.match(html, /id="selected-file" hidden/);
+  assert.match(html, /id="remove-selected-file"/);
 });
 
 test('Upload Data starts with report selection and scopes templates to the chosen report type', () => {
@@ -260,6 +265,8 @@ test('Upload Data starts with report selection and scopes templates to the chose
   assert.match(html, /data-template-link="simple"/);
   assert.match(html, /data-template-link="full"/);
   assert.match(html, /id="change-report-type"/);
+  assert.match(html, /✓ Selected/);
+  assert.match(html, /Need a template\?/);
   assert.match(script, /selectedReportType: null/);
   assert.match(script, /function renderReportTypeSelection\(/);
   assert.match(script, /link\.hidden = link\.dataset\.templateLink !== selected/);
