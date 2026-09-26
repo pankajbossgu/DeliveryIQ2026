@@ -1,6 +1,6 @@
 
 const ACTIVE_PROCESS_STATUSES = new Set(['queued', 'processing', 'review_required', 'finalizing', 'failed']);
-const state = { upload: null, result: null, processId: null, selectedReportType: null, config: { statusCategories: ['Delivered', 'In Transit', 'NDR', 'RTO', 'Cancelled', 'Other'], masterCategories: [], productCategories: [] }, reportId: null, restoring: true, restorePromise: null, validating: false, cancelling: false, configLoaded: false, productErrors: new Map(), productSaving: new Set(), selectedProducts: new Set(), selectedStatuses: new Set(), statusSaving: new Set(), statusBulkSaving: false, statusBulkError: '', statusErrors: new Map(), bulkSaving: false, bulkAction: '', bulkError: '', reviewFeedback: '', generating: false, universal: { page: 1, limit: 25, controller: null, detailCache: new Map(), loading: false } };
+const state = { upload: null, result: null, processId: null, selectedReportType: null, config: { statusCategories: ['Delivered', 'In Transit', 'NDR', 'RTO', 'Cancelled', 'Other'], masterCategories: [], productCategories: [] }, reportId: null, restoring: true, restorePromise: null, validating: false, cancelling: false, configLoaded: false, productErrors: new Map(), productSaving: new Set(), selectedProducts: new Set(), selectedStatuses: new Set(), statusSaving: new Set(), statusBulkSaving: false, statusBulkError: '', statusErrors: new Map(), bulkSaving: false, bulkAction: '', bulkError: '', reviewFeedback: '', generating: false, universal: { page: 1, limit: 25, controller: null, detailCache: new Map(), loading: false }, mappingAdmin: { products: null, masters: null, categories: null, statuses: null, productRequest: 0, statusRequest: 0, productLoading: false, statusLoading: false, productSaveGeneration: 0, statusSaveGeneration: 0, productSavingCount: 0, statusSavingCount: 0, categorySaving: false } };
 const $ = (selector) => document.querySelector(selector);
 function el(tag, text, className) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; }
 function clear(node) { node.replaceChildren(); }
@@ -191,11 +191,298 @@ async function loadReports() { const payload = await fetch('/api/reports').then(
 function table(title, rows, full) { const section = el('section'); section.append(el('h2', title)); if (!rows?.length) { section.append(el('p', 'No matching data. Try changing or clearing your filters.')); return section; } const wrap = el('div', undefined, 'report-table-wrap'); const table = document.createElement('table'); table.className = 'report-table'; const headers = ['Name', 'Orders', 'Delivered', 'In Transit', 'NDR', 'RTO', 'Delivery %', ...(full ? ['Quantity', 'Revenue'] : [])]; const head = document.createElement('tr'); headers.forEach((name) => head.append(el('th', name))); const body = document.createElement('tbody'); rows.forEach((row) => { const tr = document.createElement('tr'); [row.name, row.orders, row.Delivered, row['In Transit'], row.NDR, row.RTO, `${row.deliveryPercent}%`, ...(full ? [row.quantity, row.revenue] : [])].forEach((value) => tr.append(el('td', String(value ?? 0)))); body.append(tr); }); table.append(document.createElement('thead').appendChild(head).parentElement, body); wrap.append(table); section.append(wrap); return section; }
 function fillFilters(report) { const form = $('#report-filters'); const data = report.analytics; choices(form.elements.category, state.config.statusCategories, 'All statuses'); choices(form.elements.masterCategory, data.masterCategory.map((item) => item.name), 'All master categories'); choices(form.elements.product, data.product.map((item) => item.name), 'All products'); choices(form.elements.productCategory, data.productCategory.map((item) => item.name), 'All categories'); choices(form.elements.paymentMode, data.paymentMode.map((item) => item.name), 'All payment modes'); form.querySelectorAll('.full-filter').forEach((node) => { node.hidden = report.templateType !== 'full'; }); if (report.templateType === 'full') { choices(form.elements.courier, data.courier.map((item) => item.name), 'All couriers'); choices(form.elements.orderSource, data.orderSource.map((item) => item.name), 'All sources'); } }
 async function viewReport(id) { state.reportId = id; const form = $('#report-filters'); const query = new URLSearchParams([...new FormData(form)].filter(([, value]) => value)); const payload = await fetch(`/api/reports/${encodeURIComponent(id)}?${query}`).then((r) => r.json()); if (!payload.success) return; const report = payload.report; $('#report-detail').hidden = false; fillFilters(report); const output = $('#report-output'); clear(output); const status = report.filtered.statusDistribution; output.append(el('h2', report.reportName), el('p', `${status.totalOrders} filtered distinct orders. Percentages use the filtered total.`)); const metrics = el('div', undefined, 'metric-grid'); [['Total Orders', status.totalOrders], ...state.config.statusCategories.map((category) => [category, `${status[category]} (${status.percentages[category]}%)`])].forEach(([name, value]) => { const card = el('article'); card.append(el('span', name), el('strong', String(value))); metrics.append(card); }); output.append(metrics, table('Status distribution by date', report.filtered.date, report.templateType === 'full'), table('Master Category Performance', report.filtered.masterCategory, report.templateType === 'full'), table('Product performance (distinct order metrics)', report.filtered.product, report.templateType === 'full'), table('Product Category Performance', report.filtered.productCategory, report.templateType === 'full'), table('Payment Mode Performance', report.filtered.paymentMode, report.templateType === 'full')); if (report.templateType === 'full') output.append(table('Courier Performance', report.filtered.courier, true), table('Source / Store Performance', report.filtered.orderSource, true)); }
-function taxonomyOptions(master, selected) { const select = document.createElement('select'); select.append(new Option('Select product category', '')); state.config.productCategories.filter((item) => item.active && item.masterCategory === master.value).forEach((item) => select.append(new Option(item.name, item.name))); select.value = selected || ''; return select; }
-function mappingRow(mapping, kind) { const row = el('article', undefined, 'management-row'); row.append(el('strong', mapping.originalExample)); if (kind === 'status') { const select = document.createElement('select'); state.config.statusCategories.forEach((name) => select.append(new Option(name, name, false, name === mapping.category))); row.append(select); } else { const master = document.createElement('select'); master.append(new Option('Legacy / no master', '')); state.config.masterCategories.forEach((item) => master.append(new Option(item.name, item.name))); master.value = mapping.masterCategory || ''; let product = taxonomyOptions(master, mapping.productCategory || mapping.category); master.addEventListener('change', () => { product = replacePremiumSelect(product, taxonomyOptions(master)); }); row.append(master, product); } row.append(el('span', mapping.source || 'Client'), el('span', new Date(mapping.updatedAt).toLocaleDateString())); return row; }
-async function loadStatuses() { const payload = await fetch('/api/mappings/status').then((r) => r.json()); const target = $('#status-mappings'); clear(target); payload.mappings.forEach((item) => target.append(mappingRow(item, 'status'))); }
-async function loadProducts() { const [maps, masters, categories] = await Promise.all([fetch('/api/mappings/product').then((r) => r.json()), fetch('/api/master-categories').then((r) => r.json()), fetch('/api/product-categories').then((r) => r.json())]); state.config.masterCategories = masters.categories; state.config.productCategories = categories.categories; const list = $('#category-list'); clear(list); list.append(el('h2', 'Master Categories')); masters.categories.forEach((master) => list.append(el('span', `${master.name}${master.active ? '' : ' (inactive)'}`, 'category-chip'))); list.append(el('h2', 'Product Categories')); categories.categories.forEach((category) => list.append(el('span', `${category.masterCategory || 'Legacy'} → ${category.name}${category.active ? '' : ' (inactive)'}`, 'category-chip'))); choices($('#product-category-filter'), categories.categories.filter((x) => x.active).map((x) => x.name), 'All categories'); const search = ($('#product-search').value || '').toLowerCase(); const selected = $('#product-category-filter').value; const target = $('#product-mappings'); clear(target); const filtered = maps.mappings.filter((item) => item.originalExample.toLowerCase().includes(search) && (!selected || (item.productCategory || item.category) === selected)); filtered.forEach((item) => target.append(mappingRow(item, 'product'))); if (!filtered.length) target.append(el('p', 'No product mappings yet.')); }
-$('#file-upload')?.addEventListener('change', (event) => validateFile(event.target.files[0])); $('#upload-dropzone')?.addEventListener('drop', (event) => { event.preventDefault(); $('#upload-dropzone').classList.remove('is-dragging'); if ($('#file-upload').disabled) return; validateFile(event.dataTransfer.files[0]); }); ['dragover', 'dragenter'].forEach((name) => $('#upload-dropzone')?.addEventListener(name, (event) => { event.preventDefault(); if (!$('#file-upload').disabled) $('#upload-dropzone').classList.add('is-dragging'); })); ['dragleave', 'dragend'].forEach((name) => $('#upload-dropzone')?.addEventListener(name, () => $('#upload-dropzone').classList.remove('is-dragging'))); $('#remove-selected-file')?.addEventListener('click', resetSelectedFile); document.querySelectorAll('[data-report-type]').forEach((button) => button.addEventListener('click', () => selectReportType(button.dataset.reportType))); $('#change-report-type')?.addEventListener('click', changeReportType); $('#clear-current-result')?.addEventListener('click', removeReportModal); $('#report-filters')?.addEventListener('submit', (event) => { event.preventDefault(); viewReport(state.reportId); }); $('#clear-report-filters')?.addEventListener('click', () => { $('#report-filters').reset(); viewReport(state.reportId); }); $('#category-form')?.addEventListener('submit', async (event) => { event.preventDefault(); const form = event.currentTarget; let master = state.config.masterCategories.find((item) => item.name === form.elements.masterCategory.value); if (!master) { const created = await fetch('/api/master-categories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: form.elements.masterCategory.value }) }); const payload = await created.json(); if (!created.ok) return notice('Master category could not be created', payload.message, true); master = payload.category; } const response = await fetch('/api/product-categories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: form.elements.name.value, masterCategoryId: master._id }) }); if (response.ok) { form.reset(); await refreshConfig(); loadProducts(); } }); $('#status-search')?.addEventListener('input', loadStatuses); $('#product-search')?.addEventListener('input', loadProducts); $('#product-category-filter')?.addEventListener('change', loadProducts); $('#logout-button')?.addEventListener('click', async () => { const button = $('#logout-button'); button.disabled = true; try { await fetch('/api/auth/logout', { method: 'POST' }); } finally { location.assign('/login'); } }); const pageFromLocation = () => { const name = location.pathname.slice(1); return ['dashboard', 'upload', 'reports', 'universal', 'products', 'statuses', 'history', 'settings'].includes(name) ? name : 'dashboard'; }; window.addEventListener('popstate', () => page(pageFromLocation())); document.body.classList.add('upload-restoring'); page(pageFromLocation()); if (!state.configLoaded) refreshConfig().catch(() => {}); fetch('/api/health').then((r) => r.json()).then(() => { $('#service-status').textContent = 'Service online'; }).catch(() => { $('#service-status').textContent = 'Service unavailable'; });
+// Mapping administration only presents and saves existing mapping API records.
+function mappingBadgeInfo(mapping, kind) {
+  if (kind === 'status') return mapping.updatedBy === 'system' || mapping.source === 'System Default'
+    ? { label: 'System Default', tone: 'neutral' } : { label: 'Client Override', tone: 'blue' };
+  const source = mapping.source || 'Client Mapping';
+  const label = source === 'Manual' ? 'Manually Approved' : source === 'ai-suggested' ? 'AI Suggested' : source === 'needs-review' ? 'Needs Review' : source;
+  const tone = label === 'AI Approved' ? 'green' : label === 'Needs Review' ? 'amber' : label === 'AI Suggested' ? 'violet' : 'blue';
+  return { label, tone };
+}
+function mappingBadge(mapping, kind) {
+  const { label, tone } = mappingBadgeInfo(mapping, kind);
+  return el('span', label, `mapping-badge mapping-badge-${tone}`);
+}
+function mappingDate(value) {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(date) : '—';
+}
+function mappingLookupKey(value) {
+  return String(value).normalize('NFKC').trim().toLowerCase().replace(/[‐‑‒–—―_-]+/g, ' ').replace(/[\\/]+/g, ' ').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+let mappingToastTimer;
+function mappingToast(message, error = false) {
+  const target = $('#mapping-toast');
+  target.textContent = message; target.hidden = false;
+  target.classList.toggle('is-error', error);
+  target.setAttribute('role', error ? 'alert' : 'status');
+  clearTimeout(mappingToastTimer);
+  mappingToastTimer = setTimeout(() => { target.hidden = true; }, 4500);
+}
+function mappingState(target, title, copy, retry, actionLabel = 'Retry') {
+  const box = el('div', undefined, 'mapping-state');
+  const icon = el('span', '◇', 'mapping-state-icon'); icon.setAttribute('aria-hidden', 'true');
+  box.append(icon, el('h3', title), el('p', copy));
+  if (retry) { const button = el('button', actionLabel, 'button button-secondary'); button.type = 'button'; button.addEventListener('click', retry); box.append(button); }
+  clear(target); target.append(box);
+}
+function mappingSkeleton(target, kind) {
+  target.setAttribute('aria-busy', 'true');
+  const headers = kind === 'product' ? ['Product', 'Master Category', 'Product Category', 'Source / Status', 'Last Updated', 'Actions'] : ['Raw Status', 'Final Category', 'Source', 'Last Updated', 'Actions'];
+  const table = el('table', undefined, 'mapping-table mapping-table-skeleton');
+  const head = el('thead'); const header = el('tr');
+  headers.forEach((label) => header.append(el('th', label)));
+  head.append(header); const body = el('tbody');
+  for (let index = 0; index < 4; index += 1) {
+    const row = el('tr');
+    headers.forEach((label, column) => { const cell = el('td'); cell.dataset.label = label; cell.append(el('span', '', `mapping-skeleton-bar ${column === 0 ? 'is-name' : column === headers.length - 1 ? 'is-action' : ''}`)); row.append(cell); });
+    body.append(row);
+  }
+  table.append(head, body); clear(target); target.append(table);
+}
+function categorySkeleton() {
+  for (const selector of ['#master-category-list', '#product-category-list']) {
+    const target = $(selector); clear(target); target.setAttribute('aria-busy', 'true');
+    for (let index = 0; index < 5; index += 1) target.append(el('span', '', 'category-chip category-chip-skeleton'));
+  }
+}
+function renderCategoryLists() {
+  const { masters, categories } = state.mappingAdmin;
+  const masterList = $('#master-category-list'); const productList = $('#product-category-list');
+  masterList.removeAttribute('aria-busy'); productList.removeAttribute('aria-busy');
+  clear(masterList); clear(productList);
+  $('#master-category-count').textContent = `${masters.length} total`;
+  $('#product-category-count').textContent = `${categories.length} total`;
+  masters.forEach((master) => { const chip = el('span', undefined, `category-chip${master.active ? '' : ' is-inactive'}`); chip.append(el('span', master.name)); if (!master.active) chip.append(el('small', 'Inactive')); masterList.append(chip); });
+  categories.forEach((category) => { const chip = el('span', undefined, `category-chip${category.active ? '' : ' is-inactive'}`); chip.append(el('span', category.name), el('small', category.masterCategory || 'Legacy')); if (!category.active) chip.append(el('small', 'Inactive')); productList.append(chip); });
+  if (!masters.length) mappingState(masterList, 'No master categories yet', 'Create a category above to begin organizing products.');
+  if (!categories.length) mappingState(productList, 'No product categories yet', 'Product categories will appear here after you create one.');
+}
+function taxonomyOptions(master, selected, productName) {
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', `Product category for ${productName}`);
+  select.append(new Option('Select product category', ''));
+  state.config.productCategories.filter((item) => item.active && item.masterCategory === master.value).forEach((item) => select.append(new Option(item.name, item.name)));
+  if (selected && ![...select.options].some((option) => option.value === selected)) select.append(new Option(`${selected} (current)`, selected, true, true));
+  select.value = selected || '';
+  return select;
+}
+async function saveMappingRow(kind, mapping, controls, row, save, errorText) {
+  if (row.classList.contains('is-saving')) return;
+  const body = kind === 'status'
+    ? { status: mapping.originalExample, category: controls.category.value }
+    : { product: mapping.originalExample, masterCategory: controls.master.value, productCategory: controls.product().value, source: 'Client Modified' };
+  if (kind === 'product' && (!body.masterCategory || !body.productCategory)) {
+    errorText.textContent = 'Choose a master category and product category before saving.'; errorText.hidden = false; return;
+  }
+  const admin = state.mappingAdmin; const prefix = kind === 'product' ? 'product' : 'status';
+  admin[`${prefix}SaveGeneration`] += 1; admin[`${prefix}SavingCount`] += 1;
+  errorText.hidden = true; row.classList.add('is-saving'); save.disabled = true; save.textContent = 'Saving…';
+  Object.values(controls).forEach((control) => { const select = typeof control === 'function' ? control() : control; select.disabled = true; });
+  try {
+    const response = await fetch(`/api/mappings/${kind}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.success) throw new Error(payload.message || 'This mapping could not be saved.');
+    const items = kind === 'product' ? admin.products : admin.statuses;
+    const current = items?.find((item) => item.normalizedValue === mapping.normalizedValue || item.originalExample === mapping.originalExample);
+    Object.assign(mapping, payload.mapping);
+    if (current && current !== mapping) Object.assign(current, payload.mapping);
+    mappingToast(`${kind === 'product' ? 'Product' : 'Status'} mapping updated.`);
+    if (kind === 'product') updateProductSourceChoices();
+    if (admin[`${prefix}SavingCount`] > 1) updateMappingRowPresentation(row, mapping, kind);
+    else if (kind === 'product') renderProductMappings();
+    else renderStatusMappings();
+  } catch (error) {
+    errorText.textContent = error.message || 'This mapping could not be saved. Please retry.'; errorText.hidden = false;
+    mappingToast(errorText.textContent, true);
+  } finally {
+    row.classList.remove('is-saving'); save.textContent = 'Save changes';
+    Object.values(controls).forEach((control) => { const select = typeof control === 'function' ? control() : control; select.disabled = false; });
+    admin[`${prefix}SaveGeneration`] += 1; admin[`${prefix}SavingCount`] -= 1;
+    if (admin[`${prefix}SavingCount`] === 0 && admin[`${prefix}Loading`]) {
+      admin[`${prefix}Request`] += 1;
+      admin[`${prefix}Loading`] = false;
+      if (kind === 'product') loadProducts(); else loadStatuses();
+    }
+  }
+}
+function mappingCell(label, child, className) {
+  const cell = el('td', undefined, className);
+  cell.dataset.label = label; cell.append(child); return cell;
+}
+function updateMappingRowPresentation(row, mapping, kind) {
+  row.querySelector('.mapping-badge-cell').replaceChildren(mappingBadge(mapping, kind));
+  row.querySelector('.mapping-date-cell time').textContent = mappingDate(mapping.updatedAt);
+}
+function mappingRow(mapping, kind) {
+  const row = el('tr', undefined, 'mapping-data-row');
+  const name = el('strong', mapping.originalExample, 'mapping-row-name');
+  row.append(mappingCell(kind === 'product' ? 'Product' : 'Raw Status', name, 'mapping-name-cell'));
+  const save = el('button', 'Save changes', 'button button-secondary mapping-save'); save.type = 'button'; save.disabled = true;
+  const errorText = el('p', '', 'mapping-row-error'); errorText.setAttribute('role', 'alert'); errorText.hidden = true;
+  let controls;
+  let updateDirty;
+  if (kind === 'status') {
+    const category = document.createElement('select');
+    category.setAttribute('aria-label', `Final category for ${mapping.originalExample}`);
+    state.config.statusCategories.forEach((value) => category.append(new Option(value, value)));
+    category.value = mapping.category || '';
+    row.append(mappingCell('Final Category', category, 'mapping-select-cell'));
+    controls = { category };
+    updateDirty = () => { save.disabled = category.value === mapping.category; errorText.hidden = true; };
+    category.addEventListener('change', updateDirty);
+  } else {
+    const master = document.createElement('select');
+    master.setAttribute('aria-label', `Master category for ${mapping.originalExample}`);
+    master.append(new Option('Legacy / no master', ''));
+    state.config.masterCategories.forEach((item) => master.append(new Option(item.name, item.name)));
+    master.value = mapping.masterCategory || '';
+    let product = taxonomyOptions(master, mapping.productCategory || mapping.category, mapping.originalExample);
+    updateDirty = () => { save.disabled = !master.value || !product.value || master.value === (mapping.masterCategory || '') && product.value === (mapping.productCategory || mapping.category || ''); errorText.hidden = true; };
+    master.addEventListener('change', () => { product = replacePremiumSelect(product, taxonomyOptions(master, '', mapping.originalExample)); product.addEventListener('change', updateDirty); updateDirty(); });
+    product.addEventListener('change', updateDirty);
+    row.append(mappingCell('Master Category', master, 'mapping-select-cell'), mappingCell('Product Category', product, 'mapping-select-cell'));
+    controls = { master, product: () => product };
+  }
+  row.append(mappingCell(kind === 'product' ? 'Source / Status' : 'Source', mappingBadge(mapping, kind), 'mapping-badge-cell'));
+  row.append(mappingCell('Last Updated', el('time', mappingDate(mapping.updatedAt), 'mapping-date'), 'mapping-date-cell'));
+  const action = el('div', undefined, 'mapping-row-actions'); action.append(save, errorText);
+  row.append(mappingCell('Actions', action, 'mapping-action-cell'));
+  save.addEventListener('click', () => saveMappingRow(kind, mapping, controls, row, save, errorText));
+  return row;
+}
+function renderMappingTable(target, rows, kind) {
+  const headers = kind === 'product' ? ['Product', 'Master Category', 'Product Category', 'Source / Status', 'Last Updated', 'Actions'] : ['Raw Status', 'Final Category', 'Source', 'Last Updated', 'Actions'];
+  const table = el('table', undefined, `mapping-table mapping-table-${kind}`);
+  const head = el('thead'); const header = el('tr');
+  headers.forEach((label) => { const th = el('th', label); th.scope = 'col'; header.append(th); });
+  head.append(header); const body = el('tbody'); rows.forEach((item) => body.append(mappingRow(item, kind)));
+  table.append(head, body); clear(target); target.append(table);
+}
+function updateProductSourceChoices() {
+  const labels = [...new Set((state.mappingAdmin.products || []).map((item) => mappingBadgeInfo(item, 'product').label))];
+  choices($('#product-source-filter'), labels, 'All sources');
+}
+function renderProductMappings() {
+  if (state.mappingAdmin.products === null) return;
+  const target = $('#product-mappings'); target.removeAttribute('aria-busy');
+  const all = state.mappingAdmin.products || [];
+  const search = $('#product-search').value.trim().toLocaleLowerCase();
+  const category = $('#product-category-filter').value;
+  const source = $('#product-source-filter').value;
+  const filtered = all.filter((item) => item.originalExample.toLocaleLowerCase().includes(search) && (!category || (item.productCategory || item.category) === category) && (!source || mappingBadgeInfo(item, 'product').label === source));
+  $('#product-mapping-count').textContent = `${filtered.length} of ${all.length} mappings`;
+  if (!filtered.length) {
+    if (!all.length) mappingState(target, 'No product mappings yet', 'Mappings appear here after products are approved during report review.');
+    else mappingState(target, 'No matching products', 'Try a different search or clear the filters.', () => { $('#product-search').value = ''; $('#product-category-filter').value = ''; $('#product-source-filter').value = ''; renderProductMappings(); $('#product-search').focus(); }, 'Clear filters');
+    return;
+  }
+  renderMappingTable(target, filtered, 'product');
+}
+function renderStatusMappings() {
+  if (state.mappingAdmin.statuses === null) return;
+  const target = $('#status-mappings'); target.removeAttribute('aria-busy');
+  const all = state.mappingAdmin.statuses || [];
+  const search = $('#status-search').value.trim().toLocaleLowerCase();
+  const category = $('#status-category-filter').value;
+  const source = $('#status-source-filter').value;
+  const filtered = all.filter((item) => item.originalExample.toLocaleLowerCase().includes(search) && (!category || item.category === category) && (!source || mappingBadgeInfo(item, 'status').label === source));
+  $('#status-mapping-count').textContent = `${filtered.length} of ${all.length} mappings`;
+  if (!filtered.length) {
+    if (!all.length) mappingState(target, 'No status mappings yet', 'Status mappings appear here after a courier status is classified.');
+    else mappingState(target, 'No matching statuses', 'Try a different search or clear the filters.', () => { $('#status-search').value = ''; $('#status-category-filter').value = ''; $('#status-source-filter').value = ''; renderStatusMappings(); $('#status-search').focus(); }, 'Clear filters');
+    return;
+  }
+  renderMappingTable(target, filtered, 'status');
+}
+async function mappingResponse(url) {
+  const response = await fetch(url);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.success) throw new Error(payload.message || 'Mappings could not be loaded.');
+  return payload;
+}
+async function loadStatuses() {
+  const admin = state.mappingAdmin; const request = ++admin.statusRequest; admin.statusLoading = true;
+  const saveGeneration = admin.statusSaveGeneration;
+  const target = $('#status-mappings');
+  if (!admin.statuses) mappingSkeleton(target, 'status');
+  choices($('#status-category-filter'), state.config.statusCategories, 'All categories');
+  try {
+    const payload = await mappingResponse('/api/mappings/status');
+    if (request !== admin.statusRequest || saveGeneration !== admin.statusSaveGeneration || admin.statusSavingCount) return;
+    admin.statuses = payload.mappings; admin.statusLoading = false;
+    renderStatusMappings();
+  } catch (error) {
+    if (request !== admin.statusRequest || saveGeneration !== admin.statusSaveGeneration || admin.statusSavingCount) return;
+    admin.statusLoading = false; target.removeAttribute('aria-busy');
+    if (admin.statuses) mappingToast('Status mappings could not be refreshed.', true);
+    else mappingState(target, 'Status mappings could not be loaded', error.message, loadStatuses);
+  }
+}
+async function loadProducts() {
+  const admin = state.mappingAdmin; const request = ++admin.productRequest; admin.productLoading = true;
+  const saveGeneration = admin.productSaveGeneration;
+  const target = $('#product-mappings');
+  if (!admin.products) { categorySkeleton(); mappingSkeleton(target, 'product'); }
+  try {
+    const [maps, masters, categories] = await Promise.all([
+      mappingResponse('/api/mappings/product'), mappingResponse('/api/master-categories'), mappingResponse('/api/product-categories')
+    ]);
+    if (request !== admin.productRequest || saveGeneration !== admin.productSaveGeneration || admin.productSavingCount) return;
+    admin.products = maps.mappings; admin.masters = masters.categories; admin.categories = categories.categories; admin.productLoading = false;
+    state.config.masterCategories = masters.categories; state.config.productCategories = categories.categories;
+    choices($('#product-category-filter'), categories.categories.filter((item) => item.active).map((item) => item.name), 'All categories');
+    updateProductSourceChoices(); renderCategoryLists(); renderProductMappings();
+  } catch (error) {
+    if (request !== admin.productRequest || saveGeneration !== admin.productSaveGeneration || admin.productSavingCount) return;
+    admin.productLoading = false; target.removeAttribute('aria-busy');
+    if (admin.products) mappingToast('Product mappings could not be refreshed.', true);
+    else {
+      for (const selector of ['#master-category-list', '#product-category-list']) { const list = $(selector); list.removeAttribute('aria-busy'); mappingState(list, 'Categories unavailable', 'Please retry loading your product categories.'); }
+      mappingState(target, 'Product mappings could not be loaded', error.message, loadProducts);
+    }
+  }
+}
+async function createProductCategory(event) {
+  event.preventDefault();
+  const form = event.currentTarget; const admin = state.mappingAdmin;
+  if (admin.categorySaving) return;
+  const button = form.querySelector('button[type="submit"]'); const feedback = $('#category-form-feedback');
+  const fields = [...form.querySelectorAll('input')];
+  const masterName = form.elements.masterCategory.value.trim(); const productName = form.elements.name.value.trim();
+  if (!masterName || !productName) {
+    feedback.textContent = 'Enter both a master category and a product category.'; feedback.hidden = false;
+    mappingToast(feedback.textContent, true); return;
+  }
+  admin.categorySaving = true; button.disabled = true; button.textContent = 'Creating…'; fields.forEach((field) => { field.disabled = true; }); feedback.hidden = true;
+  try {
+    try {
+      let master = state.config.masterCategories.find((item) => item.normalizedName === mappingLookupKey(masterName));
+      if (!master) {
+        const response = await fetch('/api/master-categories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: masterName }) });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || 'Master category could not be created.');
+        master = payload.category;
+        state.config.masterCategories.push(master);
+        if (admin.masters && admin.masters !== state.config.masterCategories) admin.masters.push(master);
+        if (admin.masters && admin.categories) renderCategoryLists();
+      }
+      const response = await fetch('/api/product-categories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: productName, masterCategoryId: master._id }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'Product category could not be created.');
+      form.reset(); mappingToast('Product category created.');
+    } catch (error) {
+      feedback.textContent = error.message || 'Category could not be created. Please retry.'; feedback.hidden = false;
+      mappingToast(feedback.textContent, true); return;
+    }
+    try { await refreshConfig(); await loadProducts(); }
+    catch { mappingToast('Category created, but the lists could not be refreshed. Reload to see the latest categories.', true); }
+  } finally {
+    admin.categorySaving = false; button.disabled = false; button.textContent = 'Create category'; fields.forEach((field) => { field.disabled = false; });
+  }
+}
+$('#file-upload')?.addEventListener('change', (event) => validateFile(event.target.files[0])); $('#upload-dropzone')?.addEventListener('drop', (event) => { event.preventDefault(); $('#upload-dropzone').classList.remove('is-dragging'); if ($('#file-upload').disabled) return; validateFile(event.dataTransfer.files[0]); }); ['dragover', 'dragenter'].forEach((name) => $('#upload-dropzone')?.addEventListener(name, (event) => { event.preventDefault(); if (!$('#file-upload').disabled) $('#upload-dropzone').classList.add('is-dragging'); })); ['dragleave', 'dragend'].forEach((name) => $('#upload-dropzone')?.addEventListener(name, () => $('#upload-dropzone').classList.remove('is-dragging'))); $('#remove-selected-file')?.addEventListener('click', resetSelectedFile); document.querySelectorAll('[data-report-type]').forEach((button) => button.addEventListener('click', () => selectReportType(button.dataset.reportType))); $('#change-report-type')?.addEventListener('click', changeReportType); $('#clear-current-result')?.addEventListener('click', removeReportModal); $('#report-filters')?.addEventListener('submit', (event) => { event.preventDefault(); viewReport(state.reportId); }); $('#clear-report-filters')?.addEventListener('click', () => { $('#report-filters').reset(); viewReport(state.reportId); }); $('#category-form')?.addEventListener('submit', createProductCategory); $('#status-search')?.addEventListener('input', renderStatusMappings); $('#status-category-filter')?.addEventListener('change', renderStatusMappings); $('#status-source-filter')?.addEventListener('change', renderStatusMappings); $('#product-search')?.addEventListener('input', renderProductMappings); $('#product-category-filter')?.addEventListener('change', renderProductMappings); $('#product-source-filter')?.addEventListener('change', renderProductMappings); $('#logout-button')?.addEventListener('click', async () => { const button = $('#logout-button'); button.disabled = true; try { await fetch('/api/auth/logout', { method: 'POST' }); } finally { location.assign('/login'); } }); const pageFromLocation = () => { const name = location.pathname.slice(1); return ['dashboard', 'upload', 'reports', 'universal', 'products', 'statuses', 'history', 'settings'].includes(name) ? name : 'dashboard'; }; window.addEventListener('popstate', () => page(pageFromLocation())); document.body.classList.add('upload-restoring'); page(pageFromLocation()); if (!state.configLoaded) refreshConfig().catch(() => {}); fetch('/api/health').then((r) => r.json()).then(() => { $('#service-status').textContent = 'Service online'; }).catch(() => { $('#service-status').textContent = 'Service unavailable'; });
 function closeMobileMenu() { const menu = $('#mobile-navigation'); const backdrop = $('#mobile-menu-backdrop'); if (!menu) return; menu.hidden = true; backdrop.hidden = true; $('.menu-button').setAttribute('aria-expanded', 'false'); document.body.classList.remove('mobile-menu-open'); }
 function openMobileMenu() { const menu = $('#mobile-navigation'); const backdrop = $('#mobile-menu-backdrop'); if (!menu) return; menu.hidden = false; backdrop.hidden = false; $('.menu-button').setAttribute('aria-expanded', 'true'); document.body.classList.add('mobile-menu-open'); menu.querySelector('.mobile-menu-close').focus(); }
 (function setupMobileMenu() { const menu = $('#mobile-navigation'); const links = $('#mobile-navigation-links'); const button = $('.menu-button'); if (!menu || !links || !button) return; document.querySelectorAll('.sidebar .nav-link').forEach((link) => { const clone = link.cloneNode(true); clone.addEventListener('click', closeMobileMenu); links.append(clone); }); button.addEventListener('click', () => menu.hidden ? openMobileMenu() : closeMobileMenu()); $('#mobile-menu-backdrop').addEventListener('click', closeMobileMenu); menu.querySelector('.mobile-menu-close').addEventListener('click', closeMobileMenu); document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !menu.hidden) closeMobileMenu(); }); }());
