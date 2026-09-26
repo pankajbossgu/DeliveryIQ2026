@@ -2,7 +2,7 @@
 
 DeliveryIQ is one Express/MongoDB/Vercel application: `api/index.js` exposes the Express entry point, `src/` holds server business rules and persistence, and `public/` holds the browser application. No raw upload file is retained.
 
-`src/upload.js` parses bounded CSV/XLSX uploads (10 MB, 50,000 rows), validates the selected Simple or Full template, normalizes order/product identifiers, and performs order-level conflict checks. `src/mappings.js` provides tenant-scoped status mappings, product mappings, and product categories. `src/reports.js` creates immutable report-row snapshots and computes server-side analytics.
+`src/upload.js` parses bounded CSV/XLSX uploads (10 MB, 35,000 rows), validates the selected Simple or Full template, normalizes order/product identifiers, and performs order-level conflict checks. `src/mappings.js` provides tenant-scoped status mappings, product mappings, and product categories. `src/reports.js` creates immutable report-row snapshots and computes server-side analytics.
 
 MongoDB is used when `MONGODB_URI` is configured; a non-durable in-memory fallback supports demos and tests. The server owns the temporary `DEFAULT_CLIENT_ID` scope—request query parameters never choose a client. The current single-admin layer verifies `ADMIN_USERNAME` and `ADMIN_PASSWORD` only on the server, then issues a signed, eight-hour HttpOnly session cookie using `SESSION_SECRET`. All DeliveryIQ APIs and application pages require that session; `/login`, `/api/auth/login`, and `/api/health` remain public. This is deliberately not a multi-tenant authorization system.
 
@@ -19,7 +19,7 @@ Malformed pagination, dates, filter values, or sort values return `422` with `IN
 
 ## Product intelligence
 
-`src/upload.js` performs bounded parsing and validation only. The MongoDB-backed `ReportProcess` store in `src/reports.js` persists each validated process and its complete classification review snapshot across browser refreshes and serverless restarts; only its explicit start endpoint loads mappings and invokes classification. `src/product-classifier.js` is the only Gemini boundary. It uses the hardcoded Gemini 2.5 Flash-Lite model and server-only `GEMINI_API_KEY`, sending only a deduplicated list of unknown product names plus the authenticated client's active categories. `src/product.js` first applies client product mappings by normalized product name; it never calls the provider for those mappings. Suggestions are validated against the request batch and category allow-list when one exists (or a concise proposed category for a new client), stored separately for audit, and remain review-only until a client saves an `AI Approved`, `Client Modified`, or `Manual` mapping. Failed, timed-out, or partial AI requests leave products in Needs Review without losing the upload.
+`src/upload.js` performs bounded parsing and validation only. The MongoDB-backed `ReportProcess` store in `src/reports.js` persists small process metadata with references to bounded row and classification-review chunks across browser refreshes and serverless restarts; only its explicit start endpoint loads mappings and invokes classification. `src/product-classifier.js` is the only Gemini boundary. It uses the hardcoded Gemini 2.5 Flash-Lite model and server-only `GEMINI_API_KEY`, sending only a deduplicated list of unknown product names plus the authenticated client's active categories. `src/product.js` first applies client product mappings by normalized product name; it never calls the provider for those mappings. Suggestions are validated against the request batch and category allow-list when one exists (or a concise proposed category for a new client), stored separately for audit, and remain review-only until a client saves an `AI Approved`, `Client Modified`, or `Manual` mapping. Failed, timed-out, or partial AI requests leave products in Needs Review without losing the upload.
 
 ## Universal current-order CSV export
 
@@ -30,7 +30,7 @@ current-order export. Each stored product line receives its own CSV row, so a
 multi-product order is preserved without collapsing quantities or values.
 
 Exports are tenant-scoped from the server-owned client context, generate CSV rows
-incrementally from a MongoDB cursor, and reject requests over 50,000 current
+incrementally from a MongoDB cursor, and reject requests over 35,000 current
 orders with a clear filter-narrowing error. Every text cell is protected from CSV
 formula injection; numeric values remain numeric text. The current application
 uses `DEFAULT_CLIENT_ID` as its documented temporary development identity, so
@@ -54,3 +54,7 @@ for Cancelled and Other are `null` (outside the basis); their counts
 remain visible. A zero denominator returns zero for applicable percentages.
 Summary exports identify the basis and use its order total and delivery percentage;
 full order exports retain every matching order and product line.
+
+## Scale validation
+
+`npm test` includes 5-, 10,000-, 25,000-, and 35,000-row lifecycle tests, above-limit rejection, UTF-8 snapshot round trips, review conflicts, and unique-unknown-product provider checks. To additionally exercise a disposable MongoDB, run `DELIVERYIQ_TEST_MONGO_URI=mongodb://127.0.0.1:27018 npm test`. This opt-in test creates and drops a uniquely named test database and checks every stored collection with `$bsonSize`; it never reads `MONGODB_URI` for this fixture.

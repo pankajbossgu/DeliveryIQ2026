@@ -25,8 +25,13 @@ const rules = {
 
 function mappingIndex(mappings = []) { return new Map(mappings.map((mapping) => [mapping.normalizedValue || mapping.normalizedStatus || mapping.normalizedProduct, mapping.category])); }
 function result(originalStatus, normalizedStatus, category, mappingSource) { return { originalStatus, normalizedStatus, category: category === UNMAPPED ? null : category, mappingSource, classificationRequired: category === UNMAPPED }; }
-function classifyStatus(originalStatus, clientMappings = []) {
-  const normalizedStatus = normalizeMappingValue(originalStatus); const saved = mappingIndex(clientMappings).get(normalizedStatus);
+function createStatusClassifier(clientMappings = []) {
+  const index = mappingIndex(clientMappings);
+  return (originalStatus) => classifyIndexedStatus(originalStatus, index);
+}
+function classifyStatus(originalStatus, clientMappings = []) { return createStatusClassifier(clientMappings)(originalStatus); }
+function classifyIndexedStatus(originalStatus, index) {
+  const normalizedStatus = normalizeMappingValue(originalStatus); const saved = index.get(normalizedStatus);
   if (REPORT_CATEGORIES.includes(saved)) return result(originalStatus, normalizedStatus, saved, 'client');
   for (const [rule, category] of [['rto', 'RTO'], ['ndr', 'NDR'], ['delivered', 'Delivered'], ['cancelled', 'Cancelled'], ['transit', 'In Transit'], ['other', 'Other']]) if (rules[rule].has(normalizedStatus)) return result(originalStatus, normalizedStatus, category, 'generic');
   return result(originalStatus, normalizedStatus, UNMAPPED, 'unmapped');
@@ -36,4 +41,4 @@ function classifyProduct(originalProduct, clientMappings = [], genericMappings =
   return { originalProduct, normalizedProduct, category: category || null, mappingSource: category ? (mappingIndex(clientMappings).has(normalizedProduct) ? 'client' : 'generic') : 'unmapped', classificationRequired: !category };
 }
 function isReportCategory(category) { return REPORT_CATEGORIES.includes(category); }
-module.exports = { REPORT_CATEGORIES, UNMAPPED, classifyProduct, classifyStatus, isReportCategory, normalizeMappingValue };
+module.exports = { createStatusClassifier, REPORT_CATEGORIES, UNMAPPED, classifyProduct, classifyStatus, isReportCategory, normalizeMappingValue };

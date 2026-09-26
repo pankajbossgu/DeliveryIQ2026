@@ -398,7 +398,7 @@ test('Upload Data restoration has dedicated lifecycle states and does not reuse 
   assert.match(script, /refreshConfig\(\)\.catch\(\(\) => \{\}\)/);
   assert.match(script, /function resetSelectedFile\(/);
   assert.match(script, /Unsupported file type/);
-  assert.match(script, /Maximum supported size: 10 MB/);
+  assert.match(script, /Maximum supported size: \$\{maximumSize\}/);
   assert.match(script, /Checking your file…/);
   assert.match(script, /Cancel this report\?/);
   assert.match(script, /Cancelling report\.\.\./);

@@ -14,7 +14,7 @@ DeliveryIQ is a single CommonJS Node.js application. `api/index.js` exports the 
 
 ## Product structure
 
-The application shell now presents Dashboard, Upload Data, Reports, Product Mapping, Status Mapping, Report History, and Settings. Dashboard starts with report context, filters, an upload action, compact KPI placeholders, and three drill-down-oriented analytics areas rather than every analysis on one page. Upload Data explains the CSV/XLSX, 50,000-row workflow and its six visible processing phases. The remaining pages establish focused, plain-language destinations for the next milestones.
+The application shell now presents Dashboard, Upload Data, Reports, Product Mapping, Status Mapping, Report History, and Settings. Dashboard starts with report context, filters, an upload action, compact KPI placeholders, and three drill-down-oriented analytics areas rather than every analysis on one page. Upload Data explains the CSV/XLSX, 35,000-row workflow and its six visible processing phases. The remaining pages establish focused, plain-language destinations for the next milestones.
 
 Mobile navigation becomes a compact menu; metrics use a two-column grid and only future data tables should scroll horizontally when necessary.
 
@@ -24,4 +24,4 @@ The first persistence milestone should add Mongoose models for `User`, `Client`,
 
 ## Next implementation milestone
 
-Implement authenticated, tenant-scoped upload intake and server-side CSV/XLSX validation. Enforce the 50,000-row cap and required columns, return detected columns and invalid/duplicate-row summaries, and add tests before introducing report calculations or persistence of finalized reports.
+Implement authenticated, tenant-scoped upload intake and server-side CSV/XLSX validation. Enforce the 35,000-row cap and required columns, return detected columns and invalid/duplicate-row summaries, and add tests before introducing report calculations or persistence of finalized reports.
