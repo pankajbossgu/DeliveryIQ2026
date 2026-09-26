@@ -7,7 +7,7 @@ const { MappingStore } = require('../src/mappings');
 const { classifyProducts } = require('../src/product');
 const { GeminiProductClassifier, validateGeminiResults, GEMINI_MODEL } = require('../src/product-classifier');
 const { validateUpload, processValidatedUpload, csvTemplate, xlsxTemplate } = require('../src/upload');
-const { aggregate, applyFilters, csv } = require('../src/reports');
+const { aggregate, applyFilters, csv, ProcessingStore } = require('../src/reports');
 const { classifyStatus } = require('../src/classification');
 const testSessions = new Map();
 async function authenticatedFetch(base, pathname, options = {}) {
@@ -46,7 +46,7 @@ test('upload validation returns safe, structured details for supported templates
 });
 test('Gemini uses the hardcoded Flash-Lite model and GEMINI_API_KEY only', () => { const classifier = new GeminiProductClassifier({ apiKey: 'key', model: 'other' }); assert.equal(classifier.model, 'gemini-2.5-flash-lite'); });
 test('report process keeps a complete review snapshot and only one active process', async () => {
-  const { ProcessingStore } = require('../src/reports'); const store = new ProcessingStore({ mongoUri: null });
+  const store = new ProcessingStore({ mongoUri: null });
   const input = { summary: { detectedProducts: 2 }, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] };
   const first = await store.createValidated('client-a', input, 'request-a');
   const second = await store.createValidated('client-a', input, 'request-b');
@@ -55,8 +55,17 @@ test('report process keeps a complete review snapshot and only one active proces
   await store.updateReview('client-a', first.job.processId, 'product', 'A', { status: 'AI Approved', classificationRequired: false, masterCategory: 'Beauty', productCategory: 'Serum' });
   const restored = await store.get('client-a', first.job.processId); assert.equal(restored.result.classifications.products.length, 2); assert.equal(restored.result.classifications.products[0].classificationRequired, false); assert.equal(restored.result.classifications.products[1].classificationRequired, true);
 });
+test('completion does not overwrite a cancelled process', async () => {
+  const store = new ProcessingStore({ mongoUri: null });
+  const created = await store.createValidated('client-complete-cancel', { summary: {}, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] }, 'request-complete-cancel');
+  await store.cancel('client-complete-cancel', created.job.processId);
+  const completed = await store.complete(created.job, { reportId: 'should-not-complete' });
+  assert.equal(completed.status, 'cancelled');
+  assert.equal((await store.get('client-complete-cancel', created.job.processId)).status, 'cancelled');
+});
+
 test('cancelling a processing job prevents late stage updates from restoring it', async () => {
-  const { ProcessingStore } = require('../src/reports'); const store = new ProcessingStore({ mongoUri: null });
+  const store = new ProcessingStore({ mongoUri: null });
   const input = { summary: { detectedProducts: 1 }, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] };
   const created = await store.createValidated('client-cancel', input, 'request-cancel');
   let release; const waiting = new Promise((resolve) => { release = resolve; });
@@ -217,7 +226,6 @@ test('Report Review frontend uses accessible custom dialogs and selection-based 
 });
 
 test('unfinished failed processes remain active until the client explicitly removes them', async () => {
-  const { ProcessingStore } = require('../src/reports');
   const store = new ProcessingStore({ mongoUri: null });
   const input = { summary: { detectedProducts: 1 }, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] };
   const first = await store.createValidated('client-active', input, 'request-a');
@@ -291,14 +299,16 @@ test('Upload Data starts with report selection and scopes templates to the chose
   assert.match(html, /data-report-type="simple"/);
   assert.match(html, /data-report-type="full"/);
   assert.match(html, /id="upload-workflow" hidden/);
-  assert.match(html, /data-template-link="simple"/);
-  assert.match(html, /data-template-link="full"/);
+  assert.match(html, /id="template-actions"/);
+  assert.doesNotMatch(html, /data-template-link=/);
   assert.match(html, /id="change-report-type"/);
   assert.match(html, /✓ Selected/);
   assert.match(html, /Need a template\?/);
   assert.match(script, /selectedReportType: null/);
   assert.match(script, /function renderReportTypeSelection\(/);
-  assert.match(script, /link\.hidden = link\.dataset\.templateLink !== selected/);
+  assert.match(script, /const REPORT_TEMPLATES/);
+  assert.match(script, /function renderSelectedTemplates\(type\)/);
+  assert.match(script, /clear\(actions\)/);
   assert.match(script, /Changing the report type will clear the current selected file\. Continue\?/);
 });
 
