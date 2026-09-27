@@ -112,22 +112,44 @@ test('universal sync groups product rows, keeps occurrences immutable, and is id
   await store.syncCompletedReport('a', universalReport('a', 'R2', '2026-02-02T00:00:00Z'), [universalRow('Order 1')]);
   assert.equal(store.occurrences.size, 2);
 });
-test('Mongo universal sync writes 20,000 orders in 1,000-order batches', async () => {
-  const occurrenceBatchSizes = []; const orderBatchSizes = []; const bulkOptions = [];
+test('Mongo universal sync writes 20,000 orders in 2,000-order batches', async () => {
+  const occurrenceWrites = []; const orderWrites = []; const bulkOptions = [];
   const originals = { syncFindOne: UniversalSync.findOne, syncUpdateOne: UniversalSync.updateOne, syncFindOneAndUpdate: UniversalSync.findOneAndUpdate, occurrenceBulkWrite: UniversalOrderOccurrence.bulkWrite, orderBulkWrite: UniversalOrder.bulkWrite };
   UniversalSync.findOne = () => ({ lean: async () => null });
   UniversalSync.updateOne = async () => ({});
   UniversalSync.findOneAndUpdate = (_filter, update) => ({ lean: async () => update.$set });
-  UniversalOrderOccurrence.bulkWrite = async (operations, options) => { occurrenceBatchSizes.push(operations.length); bulkOptions.push(options); return { upsertedCount: operations.length }; };
-  UniversalOrder.bulkWrite = async (operations, options) => { orderBatchSizes.push(operations.length); bulkOptions.push(options); return orderBatchSizes.length % 2 ? { upsertedCount: operations.length } : { modifiedCount: 0 }; };
+  UniversalOrderOccurrence.bulkWrite = async (operations, options) => { occurrenceWrites.push(operations); bulkOptions.push(options); return { upsertedCount: operations.length }; };
+  UniversalOrder.bulkWrite = async (operations, options) => {
+    orderWrites.push(operations); bulkOptions.push(options);
+    if (orderWrites.length % 2) return { upsertedCount: operations.length - (orderWrites.length === 1 ? 1 : 0) };
+    return { modifiedCount: orderWrites.length === 2 ? 1 : 0 };
+  };
   try {
     const report = universalReport('a', 'R-batches', '2026-02-01T00:00:00Z');
     const rows = Array.from({ length: 20000 }, (_, index) => universalRow(`ORD-${index}`));
     const result = await new UniversalStore({ mongoUri: null }).syncMongo('a', report, rows, { ordersProcessed: 0, occurrencesCreated: 0, ordersInserted: 0, ordersUpdated: 0, skippedDuplicateObservations: 0 });
     assert.equal(result.status, 'completed');
     assert.equal(result.counts.ordersProcessed, 20000);
-    assert.deepEqual(occurrenceBatchSizes, Array(20).fill(1000));
-    assert.deepEqual(orderBatchSizes, Array(40).fill(1000));
+    assert.equal(result.counts.occurrencesCreated, 20000);
+    assert.equal(result.counts.ordersInserted, 19999);
+    assert.equal(result.counts.ordersUpdated, 1);
+    assert.deepEqual(occurrenceWrites.map((operations) => operations.length), Array(10).fill(2000));
+    assert.deepEqual(orderWrites.map((operations) => operations.length), Array(20).fill(2000));
+    const existingInsert = orderWrites[0][0].updateOne;
+    const newInsert = orderWrites[0][1].updateOne;
+    const existingUpdate = orderWrites[1][0].updateOne;
+    assert.equal(existingInsert.filter.canonicalOrderId, 'ORD-0');
+    assert.equal(existingInsert.upsert, true);
+    assert.ok(existingInsert.update.$setOnInsert);
+    assert.equal(newInsert.filter.canonicalOrderId, 'ORD-1');
+    assert.equal(newInsert.upsert, true);
+    assert.ok(newInsert.update.$setOnInsert);
+    assert.equal(existingUpdate.filter.canonicalOrderId, 'ORD-0');
+    assert.equal(existingUpdate.upsert, undefined);
+    assert.ok(existingUpdate.update.$set);
+    assert.equal(occurrenceWrites[0][0].updateOne.upsert, true);
+    assert.ok(occurrenceWrites[0][0].updateOne.update.$setOnInsert);
+    assert.equal(occurrenceWrites[0][0].updateOne.update.$set, undefined);
     assert.ok(bulkOptions.every((options) => options.ordered === false));
   } finally {
     UniversalSync.findOne = originals.syncFindOne; UniversalSync.updateOne = originals.syncUpdateOne; UniversalSync.findOneAndUpdate = originals.syncFindOneAndUpdate;

@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const crypto = require('node:crypto');
 const { MAX_SOURCE_ROWS, normalizeOrderId, normalizePaymentMode } = require('./upload');
 const CATEGORIES = ['Delivered', 'In Transit', 'NDR', 'RTO', 'Cancelled', 'Other'];
-const UNIVERSAL_SYNC_BATCH_SIZE = 1000;
+const UNIVERSAL_SYNC_BATCH_SIZE = 2000;
 const rowSchema = new mongoose.Schema({ reportId: { type: String, index: true }, clientId: { type: String, index: true }, orderId: String, normalizedOrderId: String, orderDate: String, category: String, originalStatus: String, normalizedStatus: String, originalProductName: String, normalizedProductName: String, masterCategory: String, productCategory: String, paymentMode: String, courier: String, orderSource: String, quantity: Number, productPrice: Number, rowValue: Number }, { versionKey: false });
 rowSchema.index({ clientId: 1, reportId: 1, orderDate: 1 });
 const reportSchema = new mongoose.Schema({ reportId: { type: String, unique: true }, clientId: { type: String, index: true }, requestId: { type: String }, reportName: String, templateType: String, sourceFileName: String, sourceRowCount: Number, uniqueOrderCount: Number, reportStatus: String, createdAt: Date, completedAt: Date, summary: Object, dateRange: Object, availableDimensions: [String], analytics: Object, analyticsRef: mongoose.Schema.Types.Mixed }, { versionKey: false });
