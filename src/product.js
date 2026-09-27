@@ -24,7 +24,7 @@ function matchTaxonomyPair(taxonomy, master, product) {
   return taxonomy.productCategories.find((x) => categoryKey(x.masterCategory) === categoryKey(master) && categoryKey(x.name) === categoryKey(product)) || null;
 }
 function reviewState(item, status, reason) {
-  Object.assign(item, { suggestedCategory: null, suggestedProductCategory: null, suggestedMasterCategory: null, confidence: null, suggestionReason: null, mappingSource: 'needs-review', classificationRequired: true, suggestionStatus: status, manualReason: reason });
+  Object.assign(item, { suggestedCategory: null, suggestedProductCategory: null, suggestedMasterCategory: null, confidence: null, suggestionReason: null, mappingSource: 'needs-review', classificat: true, classificationRequired: true, suggestionStatus: status, manualReason: reason });
 }
 function classifyProducts(products, { mappings = [], categories = [], masterCategories = [], productCategories, suggestions = [], provider, taxonomyResolver, retry = false } = {}) {
   const current = buildTaxonomy(productCategories || categories, masterCategories);
@@ -40,8 +40,12 @@ function classifyProducts(products, { mappings = [], categories = [], masterCate
   const items = [...unique.values()].map((item) => {
     const mapping = saved.get(item.normalizedProductName);
     const productCategory = normalizeCategory(mapping?.productCategory || mapping?.category);
-    Object.assign(item, { category: productCategory, productCategory, masterCategory: normalizeCategory(mapping?.masterCategory), confidence: productCategory ? 1 : null, mappingSource: productCategory ? 'client' : 'unmapped', classificationRequired: !productCategory });
-    if (productCategory) return item;
+    const masterCategory = normalizeCategory(mapping?.masterCategory);
+    // A product is ONLY fully mapped when BOTH masterCategory AND productCategory exist.
+    // If either is missing, treat it as incomplete and send to Gemini/review.
+    const isFullyMapped = productCategory && masterCategory;
+    Object.assign(item, { category: productCategory, productCategory, masterCategory, confidence: isFullyMapped ? 1 : null, mappingSource: isFullyMapped ? 'client' : 'unmapped', classificationRequired: !isFullyMapped });
+    if (isFullyMapped) return item;
     const previous = prior.get(item.normalizedProductName);
     item.suggestionHistory = previous?.history || [];
     if (item.manualOnly) { reviewState(item, 'Needs Review', 'This product name requires manual category selection. Its original name has been preserved.'); return item; }
@@ -59,10 +63,28 @@ function classifyProducts(products, { mappings = [], categories = [], masterCate
     for (const item of pending) {
       const suggestion = byProduct.get(item.originalProductName);
       let pair = suggestion && matchTaxonomyPair(current, suggestion.masterCategory, suggestion.productCategory || suggestion.category);
-      if (!pair && suggestion && suggestion.productCategory !== 'NO_MATCH' && suggestion.category !== 'NO_MATCH' && taxonomyResolver) {
-        try { pair = await taxonomyResolver(suggestion); } catch { pair = null; }
+      // If Gemini returned a valid pair but it's not yet in the existing taxonomy,
+      // resolve it (create if needed) and preserve both master and product as suggestions.
+      if (!pair && suggestion && suggestion.productCategory !== 'NO_MATCH' && suggestion.category !== 'NO_MATCH' && suggestion.masterCategory && taxonomyResolver) {
+        try {
+          const resolved = await taxonomyResolver(suggestion);
+          if (resolved) pair = resolved;
+        } catch { pair = null; }
       }
-      if (pair) Object.assign(item, { suggestedCategory: pair.name, suggestedProductCategory: pair.name, suggestedMasterCategory: pair.masterCategory, confidence: typeof suggestion.confidence === 'number' && Number.isFinite(suggestion.confidence) && suggestion.confidence >= 0 && suggestion.confidence <= 1 ? suggestion.confidence : null, suggestionReason: suggestion.reason || null, mappingSource: 'ai-suggested', suggestionStatus: 'AI Suggested', classificationRequired: true, manualReason: null });
+      if (pair) {
+        // When we have a pair (either existing or newly resolved), assign both master and product as suggestions.
+        // Both came from the same Gemini/taxonomy decision, so they must stay together.
+        Object.assign(item, {
+          suggestedCategory: pair.name,
+          suggestedProductCategory: pair.name,
+          suggestedMasterCategory: pair.masterCategory,
+          confidence: typeof suggestion.confidence === 'number' ? suggestion.confidence : null,
+          suggestionReason: suggestion.reason || null,
+          mappingSource: 'ai-suggested',
+          suggestionStatus: 'AI Suggested',
+          model: response.model || null
+        });
+      }
       else if (suggestion?.productCategory === 'NO_MATCH' || suggestion?.category === 'NO_MATCH') reviewState(item, 'No Match', 'No suitable existing category was found. Please select master and product categories manually.');
       else reviewState(item, 'Failed', 'AI classification could not be completed. Retry or select categories manually.');
       item.model = response.model || null;
