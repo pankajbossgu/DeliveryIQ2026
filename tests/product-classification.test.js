@@ -249,8 +249,10 @@ test('retry polling shares one timer while pending or in flight and stops after 
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/js/app.js'), 'utf8');
   const helper = source.match(/function scheduleProductRetryPoll\([^]*?\n}/)[0];
   let running = true; let release; let calls = 0; const timers = [];
-  const context = require('node:vm').createContext({ productRetryPollTimer: null, productRetryRunning: () => running, setTimeout: (callback) => { timers.push(callback); return timers.length; }, pollProcess: async () => { calls++; await new Promise((resolve) => { release = resolve; }); } });
+  const context = require('node:vm').createContext({ state: { bulkRetry: null }, productRetryPollTimer: null, productRetryRunning: () => running, setTimeout: (callback) => { timers.push(callback); return timers.length; }, pollProcess: async () => { calls++; await new Promise((resolve) => { release = resolve; }); } });
   require('node:vm').runInContext(helper, context);
+  context.state.bulkRetry = { total: 25, processed: 0 }; context.scheduleProductRetryPoll();
+  assert.equal(timers.length, 0); context.state.bulkRetry = null;
   context.scheduleProductRetryPoll(); context.scheduleProductRetryPoll(); context.scheduleProductRetryPoll();
   assert.equal(timers.length, 1);
   const pending = timers[0]();
