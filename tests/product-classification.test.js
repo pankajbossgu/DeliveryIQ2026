@@ -259,3 +259,27 @@ test('retry polling shares one timer while pending or in flight and stops after 
   const second = timers[1](); running = false; release(); await second;
   context.scheduleProductRetryPoll(); assert.equal(timers.length, 2); assert.equal(calls, 2);
 });
+
+
+test('suggestion history keeps expansion through rerenders without leaking across products or processes', () => {
+  const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/js/app.js'), 'utf8');
+  const helper = source.match(/function preserveSuggestionHistory\([^]*?\n}/)[0];
+  const state = { processId: 'one', openSuggestionHistories: new Set() };
+  const context = require('node:vm').createContext({ state });
+  require('node:vm').runInContext(helper, context);
+  const render = (value) => {
+    const node = { isConnected: true, addEventListener: (_, listener) => { node.toggle = listener; } };
+    context.preserveSuggestionHistory(node, value);
+    return node;
+  };
+  const first = render('Serum'); assert.equal(first.open, false);
+  first.open = true; first.toggle();
+  assert.equal(render('Serum').open, true);
+  assert.equal(render('Other').open, false);
+  first.isConnected = false; first.open = false; first.toggle();
+  const replacement = render('Serum'); assert.equal(replacement.open, true);
+  replacement.open = false; replacement.toggle();
+  assert.equal(render('Serum').open, false);
+  replacement.open = true; replacement.toggle(); state.processId = 'two';
+  assert.equal(render('Serum').open, false);
+});
