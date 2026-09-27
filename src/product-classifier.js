@@ -1,7 +1,7 @@
 const { buildTaxonomy, matchTaxonomyPair } = require('./product');
 const GEMINI_MODEL = "gemini-2.5-flash-lite";
-const BATCH_SIZE = 100;
-const REQUEST_TIMEOUT_MS = 10_000;
+const BATCH_SIZE = 25;
+const REQUEST_TIMEOUT_MS = 30_000;
 // Application schema-size budget, not an assumed provider enum limit. The
 // server's category-pair validator remains authoritative at every size.
 const MAX_SCHEMA_ENUM_VALUES = 200;
