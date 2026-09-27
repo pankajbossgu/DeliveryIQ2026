@@ -26,7 +26,7 @@ function matchTaxonomyPair(taxonomy, master, product) {
 function reviewState(item, status, reason) {
   Object.assign(item, { suggestedCategory: null, suggestedProductCategory: null, suggestedMasterCategory: null, confidence: null, suggestionReason: null, mappingSource: 'needs-review', classificat: true, classificationRequired: true, suggestionStatus: status, manualReason: reason });
 }
-function classifyProducts(products, { mappings = [], categories = [], masterCategories = [], productCategories, suggestions = [], provider, taxonomyResolver, retry = false } = {}) {
+function classifyProducts(products, { mappings = [], categories = [], masterCategories = [], productCategories, suggestions = [], provider, retry = false } = {}) {
   const current = buildTaxonomy(productCategories || categories, masterCategories);
   const unique = new Map();
   for (const value of products) {
@@ -62,22 +62,16 @@ function classifyProducts(products, { mappings = [], categories = [], masterCate
     const byProduct = new Map((response.results || []).map((x) => [x.product, x]));
     for (const item of pending) {
       const suggestion = byProduct.get(item.originalProductName);
-      let pair = suggestion && matchTaxonomyPair(current, suggestion.masterCategory, suggestion.productCategory || suggestion.category);
-      // If Gemini returned a valid pair but it's not yet in the existing taxonomy,
-      // resolve it (create if needed) and preserve both master and product as suggestions.
-      if (!pair && suggestion && suggestion.productCategory !== 'NO_MATCH' && suggestion.category !== 'NO_MATCH' && suggestion.masterCategory && taxonomyResolver) {
-        try {
-          const resolved = await taxonomyResolver(suggestion);
-          if (resolved) pair = resolved;
-        } catch { pair = null; }
-      }
-      if (pair) {
-        // When we have a pair (either existing or newly resolved), assign both master and product as suggestions.
-        // Both came from the same Gemini/taxonomy decision, so they must stay together.
+      const pair = suggestion && matchTaxonomyPair(current, suggestion.masterCategory, suggestion.productCategory || suggestion.category);
+      if (pair || suggestion && suggestion.productCategory !== 'NO_MATCH' && suggestion.category !== 'NO_MATCH' && suggestion.masterCategory) {
+        // Gemini output is review-only. Reuse the canonical existing pair when
+        // available, otherwise retain its proposed pair without creating taxonomy.
+        const suggestedMasterCategory = pair?.masterCategory || normalizeCategory(suggestion.masterCategory);
+        const suggestedProductCategory = pair?.name || normalizeCategory(suggestion.productCategory || suggestion.category);
         Object.assign(item, {
-          suggestedCategory: pair.name,
-          suggestedProductCategory: pair.name,
-          suggestedMasterCategory: pair.masterCategory,
+          suggestedCategory: suggestedProductCategory,
+          suggestedProductCategory,
+          suggestedMasterCategory,
           confidence: typeof suggestion.confidence === 'number' ? suggestion.confidence : null,
           suggestionReason: suggestion.reason || null,
           mappingSource: 'ai-suggested',

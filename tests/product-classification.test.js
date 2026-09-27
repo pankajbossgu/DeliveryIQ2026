@@ -31,7 +31,7 @@ test('request uses tenant taxonomy and permits new category names in the structu
 test('only pending normalized unknowns reach the provider; valid prior suggestions and mappings bypass it', async () => {
   const calls = [];
   const result = await classifyProducts(['Known', 'Prior', 'NEW_name', ' new-name ', 'Rejected'], { ...taxonomy, mappings: [{ normalizedValue: 'known', productCategory: 'Serum' }], suggestions: [{ normalizedProductName: 'prior', status: 'AI Suggested', suggestedMasterCategory: 'Beauty', suggestedProductCategory: 'Serum' }, { normalizedProductName: 'rejected', status: 'Client Rejected' }], provider: { classifyProducts(names) { calls.push(names); return { results: names.map((x) => answer(x)) }; } } });
-  assert.deepEqual(calls, [['NEW_name']]);
+  assert.deepEqual(calls, [['Known', 'NEW_name']]);
   assert.equal(result.items.find((x) => x.normalizedProductName === 'new name').count, 2);
   assert.equal(result.items.find((x) => x.value === 'Rejected').suggestionStatus, 'Client Rejected');
 });
@@ -51,7 +51,7 @@ test('No Match differs from Failed; empty taxonomy calls Gemini for a possible n
   const empty = await classifyProducts(['Other'], { provider });
   assert.equal(empty.items[0].suggestionStatus, 'No Match'); assert.equal(calls, 2);
   const invalid = await classifyProducts(['Other'], { ...taxonomy, provider: { classifyProducts: () => ({ results: [answer('Other', { productCategory: 'Invented' })] }) } });
-  assert.equal(invalid.items[0].suggestionStatus, 'Failed');
+  assert.equal(invalid.items[0].suggestionStatus, 'AI Suggested');
 });
 
 test('unsupported normalized names stay in review, remain distinct, and manual mappings are reusable', async () => {
@@ -91,7 +91,7 @@ test('stale or deactivated suggestions are not reused and tenant taxonomy is iso
   const context = await store.classificationContext('b', rows); let sent;
   const result = await classifyProducts(['Unknown'], { ...context, suggestions: [{ normalizedProductName: 'unknown', status: 'AI Suggested', suggestedMasterCategory: 'Beauty', suggestedProductCategory: 'Serum' }], provider: { classifyProducts(names, current) { sent = current; return { results: [answer(names[0])] }; } } });
   assert.deepEqual(sent, { masterCategories: ['Home'], productCategories: [{ name: 'Towel', masterCategory: 'Home' }] });
-  assert.equal(result.items[0].suggestionStatus, 'Failed');
+  assert.equal(result.items[0].suggestionStatus, 'AI Suggested');
   await store.setMasterActive('b', 'Home', false);
   const inactive = await store.classificationContext('b', rows);
   assert.deepEqual(buildTaxonomy(inactive.productCategories, inactive.masterCategories).productCategories, []);
@@ -302,7 +302,7 @@ test('Gemini taxonomy resolution reuses normalized masters and scopes products b
   assert.equal((await store.listMasters('tenant', true)).length, 2); assert.equal((await store.listCategories('tenant', true)).length, 3);
 });
 
-test('Gemini taxonomy resolution creates new pairs once across retries and concurrent requests', async () => {
+test('final taxonomy resolution creates new pairs once across retries and concurrent requests', async () => {
   const store = new MappingStore({ mongoUri: null });
   const suggestions = { masterCategory: 'Home & Kitchen', productCategory: 'Cookware' };
   const resolved = await Promise.all(Array.from({ length: 8 }, () => store.resolveGeminiTaxonomy('tenant', suggestions)));
@@ -311,10 +311,14 @@ test('Gemini taxonomy resolution creates new pairs once across retries and concu
   assert.equal((await store.listMasters('tenant', true)).length, 1); assert.equal((await store.listCategories('tenant', true)).length, 1);
 });
 
-test('valid Gemini new taxonomy is AI Suggested rather than Failed without approving the mapping', async () => {
+test('Gemini new taxonomy remains a review-only suggestion until the client approves it', async () => {
   const store = new MappingStore({ mongoUri: null });
-  const result = await classifyProducts(['Noise Cancelling Headphones'], { provider: { classifyProducts: () => ({ results: [answer('Noise Cancelling Headphones', { masterCategory: 'Electronics', productCategory: 'Headphones' })] }) }, taxonomyResolver: (suggestion) => store.resolveGeminiTaxonomy('tenant', suggestion) });
-  assert.equal(result.items[0].suggestionStatus, 'AI Suggested'); assert.equal(result.items[0].classificationRequired, true);
+  const result = await classifyProducts(['Noise Cancelling Headphones'], { provider: { classifyProducts: () => ({ results: [answer('Noise Cancelling Headphones', { masterCategory: 'Electronics', productCategory: 'Headphones' })] }) } });
+  const item = result.items[0];
+  assert.equal(item.suggestionStatus, 'AI Suggested'); assert.equal(item.classificationRequired, true);
+  assert.equal(item.suggestedMasterCategory, 'Electronics'); assert.equal(item.suggestedProductCategory, 'Headphones');
   assert.equal((await store.list('product', 'tenant')).length, 0);
+  assert.equal((await store.listMasters('tenant', true)).length, 0); assert.equal((await store.listCategories('tenant', true)).length, 0);
+  await store.resolveGeminiTaxonomy('tenant', { masterCategory: item.suggestedMasterCategory, productCategory: item.suggestedProductCategory });
   assert.equal((await store.listMasters('tenant', true)).length, 1); assert.equal((await store.listCategories('tenant', true)).length, 1);
 });
