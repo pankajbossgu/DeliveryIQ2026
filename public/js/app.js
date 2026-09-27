@@ -685,7 +685,7 @@ function openMobileMenu() { const menu = $('#mobile-navigation'); const backdrop
 (function setupMobileMenu() { const menu = $('#mobile-navigation'); const links = $('#mobile-navigation-links'); const button = $('.menu-button'); if (!menu || !links || !button) return; document.querySelectorAll('.sidebar .nav-link').forEach((link) => { const clone = link.cloneNode(true); clone.addEventListener('click', closeMobileMenu); links.append(clone); }); button.addEventListener('click', () => menu.hidden ? openMobileMenu() : closeMobileMenu()); $('#mobile-menu-backdrop').addEventListener('click', closeMobileMenu); menu.querySelector('.mobile-menu-close').addEventListener('click', closeMobileMenu); document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !menu.hidden) closeMobileMenu(); }); }());
 
 // Universal Report is a server-grouped, tenant-scoped view. The browser only renders it.
-const universalView = { mode: 'insights', quickInsight: 'top-performers' };
+const universalView = { mode: 'overview', quickInsight: 'top-performers' };
 function universalFormatNumber(value) { return Number.isFinite(Number(value)) ? Number(value).toLocaleString('en-IN') : '—'; }
 function universalFormatCurrency(value) { return Number.isFinite(Number(value)) ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(value)) : '—'; }
 function universalFormatDate(value) { const [year, month, day] = String(value || '').split('-').map(Number); const date = year && month && day ? new Date(year, month - 1, day) : null; return date && !Number.isNaN(date) ? new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(date) : '—'; }
@@ -701,59 +701,29 @@ function universalTable(report) { const target = $('#universal-orders-content');
   const cards = el('div', undefined, 'universal-group-cards'); rows.forEach((row) => { const card = el('article', undefined, 'universal-group-card'); card.append(el('h3', row.name), el('p', `${universalFormatNumber(row.orderTotal)} ${report.orderTotalLabel.toLowerCase()}`)); const list = el('dl'); fields.slice(0, 8).forEach(([label, field]) => { const value = field === 'deliveryPercentage' ? `${universalFormatNumber(row[field] || 0)}%` : universalFormatNumber(row[field] || 0); list.append(el('dt', label), el('dd', value)); }); list.append(el('dt', 'Order Value'), el('dd', universalFormatCurrency(row.totalOrderValue)), el('dt', 'Delivered Value'), el('dd', universalFormatCurrency(row.deliveredOrderValue))); card.append(list); cards.append(card); }); target.append(cards); }
 function rangeLabel(range) { return range?.from && range?.to ? `${universalFormatDate(range.from)} — ${universalFormatDate(range.to)}` : 'No current order data'; }
 function renderUniversalInsight(insight, orderTotalLabel) {
-  const titles = { 'top-performers': 'Top Performing Products', 'needs-attention': 'Needs Attention', 'high-volume': 'High Volume Products', 'rto-risk': 'RTO Risk', 'ndr-risk': 'NDR Risk', 'best-categories': 'Best Categories', 'best-couriers': 'Best Couriers' };
-  const descriptions = {
-    'top-performers': 'Highest delivery rate · minimum 10 distinct orders · up to 15 results',
-    'needs-attention': 'Lowest delivery rate · minimum 10 distinct orders · up to 15 results',
-    'high-volume': `Ranked by distinct ${orderTotalLabel.toLowerCase()} · up to 15 results`,
-    'rto-risk': 'Historical RTO incidence, not predictive · minimum 10 distinct orders · up to 15 results',
-    'ndr-risk': 'Historical NDR incidence, not predictive · minimum 10 distinct orders · up to 15 results',
-    'best-categories': 'Highest delivery rate · minimum 10 distinct orders · up to 15 results',
-    'best-couriers': 'Highest delivery rate · minimum 10 distinct orders · up to 15 results'
+  const key = insight?.key || universalView.quickInsight;
+  const details = {
+    'top-performers': { title: 'Top Performing Products', description: 'Products with the strongest fulfilled-order performance in the selected range.', rule: 'Ranking rule: highest Delivery %', threshold: 'Threshold: 10+ distinct orders', entity: 'product' },
+    'needs-attention': { title: 'Needs Attention', description: 'Products with the lowest fulfilled-order performance that need a closer review.', rule: 'Ranking rule: lowest Delivery %', threshold: 'Threshold: 10+ distinct orders', entity: 'product' },
+    'high-volume': { title: 'High Volume Products', description: 'Products handling the greatest number of unique orders in the selected range.', rule: `Ranking rule: most distinct ${orderTotalLabel.toLowerCase()}`, threshold: 'Threshold: all matching products', entity: 'product' },
+    'rto-risk': { title: 'RTO Risk', description: 'Products with the highest historical return-to-origin incidence; this is not a prediction.', rule: 'Ranking rule: highest historical RTO %', threshold: 'Threshold: 10+ distinct orders', entity: 'product', metric: ['RTO', 'Historical RTO %'] },
+    'ndr-risk': { title: 'NDR Risk', description: 'Products with the highest historical non-delivery incidence; this is not a prediction.', rule: 'Ranking rule: highest historical NDR %', threshold: 'Threshold: 10+ distinct orders', entity: 'product', metric: ['NDR', 'Historical NDR %'] },
+    'best-categories': { title: 'Best Categories', description: 'Categories with the strongest fulfilled-order performance in the selected range.', rule: 'Ranking rule: highest Delivery %', threshold: 'Threshold: 10+ distinct orders', entity: 'category' },
+    'best-couriers': { title: 'Best Couriers', description: 'Couriers with the strongest fulfilled-order performance in the selected range.', rule: 'Ranking rule: highest Delivery %', threshold: 'Threshold: 10+ distinct orders', entity: 'courier' }
   };
-  const title = titles[insight?.key] || titles[universalView.quickInsight];
-  const description = descriptions[insight?.key] || descriptions[universalView.quickInsight];
-  const statusMetric = { 'rto-risk': ['RTO', 'Historical RTO %'], 'ndr-risk': ['NDR', 'Historical NDR %'] }[insight?.key];
-  const isHighVolume = insight?.key === 'high-volume';
-  const entity = insight?.key === 'best-categories' ? 'category' : insight?.key === 'best-couriers' ? 'courier' : 'product';
-  const entityPlural = entity === 'category' ? 'categories' : `${entity}s`;
-  const target = $('#universal-insight-content');
-  const rows = insight?.rows || [];
-  $('#universal-insight-title').textContent = title;
-  $('#universal-insight-description').textContent = description;
-  $('#universal-insight-summary').textContent = `${rows.length} result${rows.length === 1 ? '' : 's'}`;
-  clear(target);
-  if (!rows.length) {
-    const empty = el('div', undefined, 'universal-empty');
-    empty.append(el('h3', `No ${entityPlural} to show`), el('p', insight?.key === 'high-volume' ? `No ${entityPlural} match these filters.` : `No ${entityPlural} meet the 10-order minimum for this insight.`));
-    target.append(empty);
-    return;
-  }
-  const table = document.createElement('table');
-  table.className = 'universal-table universal-insight-table';
-  table.setAttribute('aria-label', title);
-  const head = document.createElement('thead');
-  const heading = document.createElement('tr');
-  const entityLabel = entity[0].toUpperCase() + entity.slice(1);
-  const metricLabel = isHighVolume ? `Distinct ${orderTotalLabel}` : statusMetric?.[1] || 'Delivery %';
-  [['Rank', false], [entityLabel, false], [metricLabel, true], ...(!isHighVolume ? [[orderTotalLabel, true]] : [])].forEach(([label, numeric], index) => {
-    const cell = el('th', label, numeric ? 'numeric' : '');
-    if (index === 2) cell.classList.add('insight-rank-metric');
-    heading.append(cell);
-  });
-  head.append(heading);
-  const body = document.createElement('tbody');
-  rows.forEach((row, index) => {
-    const line = document.createElement('tr');
-    line.append(el('td', String(index + 1), 'numeric'));
-    const name = el('th', row.name); name.scope = 'row'; line.append(name);
-    const metric = isHighVolume ? universalFormatNumber(row.orderTotal) : `${universalFormatNumber(statusMetric ? row.percentages?.[statusMetric[0]] : row.deliveryPercentage)}%`;
-    line.append(el('td', metric, 'numeric insight-rank-metric'));
-    if (!isHighVolume) line.append(el('td', universalFormatNumber(row.orderTotal), 'numeric'));
-    body.append(line);
-  });
-  table.append(head, body);
-  const wrap = el('div', undefined, 'universal-table-wrap'); wrap.append(table); target.append(wrap);
+  const detail = details[key] || details['top-performers']; const isHighVolume = key === 'high-volume';
+  const entityLabel = detail.entity[0].toUpperCase() + detail.entity.slice(1); const entityPlural = detail.entity === 'category' ? 'categories' : `${detail.entity}s`;
+  const target = $('#universal-insight-content'); const rows = insight?.rows || [];
+  $('#universal-insight-title').textContent = detail.title; $('#universal-insight-description').textContent = detail.description;
+  $('#universal-insight-rule').textContent = detail.rule; $('#universal-insight-threshold').textContent = detail.threshold;
+  $('#universal-insight-summary').textContent = `${rows.length} ranked result${rows.length === 1 ? '' : 's'}`; clear(target);
+  if (!rows.length) { const empty = el('div', undefined, 'universal-empty universal-insight-empty'); empty.append(el('h3', `No ranked ${entityPlural} yet`), el('p', isHighVolume ? `No ${entityPlural} match the current filters. Try widening the date range.` : `No ${entityPlural} meet the 10 distinct-order threshold for this insight.`)); target.append(empty); return; }
+  const table = document.createElement('table'); table.className = 'universal-table universal-insight-table'; table.setAttribute('aria-label', detail.title);
+  const head = document.createElement('thead'); const heading = document.createElement('tr'); const metricLabel = isHighVolume ? `Distinct ${orderTotalLabel}` : detail.metric?.[1] || 'Delivery %';
+  [['Rank', false], [entityLabel, false], [metricLabel, true], ...(!isHighVolume ? [[`Distinct ${orderTotalLabel}`, true]] : [])].forEach(([label, numeric], index) => { const cell = el('th', label, numeric ? 'numeric' : ''); if (index === 2) cell.classList.add('insight-rank-metric'); heading.append(cell); }); head.append(heading);
+  const body = document.createElement('tbody'); rows.forEach((row, index) => { const line = document.createElement('tr'); const rank = el('td', '', 'insight-rank'); rank.append(el('span', String(index + 1), 'insight-rank-number')); line.append(rank); const name = el('th', row.name); name.scope = 'row'; line.append(name); const metric = isHighVolume ? universalFormatNumber(row.orderTotal) : `${universalFormatNumber(detail.metric ? row.percentages?.[detail.metric[0]] : row.deliveryPercentage)}%`; line.append(el('td', metric, 'numeric insight-rank-metric insight-primary-metric')); if (!isHighVolume) line.append(el('td', universalFormatNumber(row.orderTotal), 'numeric')); body.append(line); });
+  table.append(head, body); const wrap = el('div', undefined, 'universal-table-wrap'); wrap.append(table); target.append(wrap);
+  const cards = el('div', undefined, 'universal-insight-cards'); rows.forEach((row, index) => { const card = el('article', undefined, 'universal-insight-card'); const cardHeading = el('div', undefined, 'universal-insight-card-heading'); const cardRank = el('span', `#${index + 1}`, 'insight-rank-number'); cardHeading.append(cardRank, el('h3', row.name)); const primary = el('div', undefined, 'universal-insight-card-metric'); primary.append(el('span', metricLabel), el('strong', isHighVolume ? universalFormatNumber(row.orderTotal) : `${universalFormatNumber(detail.metric ? row.percentages?.[detail.metric[0]] : row.deliveryPercentage)}%`)); card.append(cardHeading, primary); if (!isHighVolume) { const orders = el('p', undefined, 'universal-insight-card-supporting'); orders.append(el('span', `Distinct ${orderTotalLabel}`), el('strong', universalFormatNumber(row.orderTotal))); card.append(orders); } cards.append(card); }); target.append(cards);
 }
 async function loadUniversal() {
   const target = $('#universal-orders-content');

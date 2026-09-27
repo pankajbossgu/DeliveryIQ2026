@@ -253,21 +253,9 @@
 
         <div class="universal-mode-bar">
           <div class="universal-mode-switch" role="group" aria-label="Report view">
-            <button type="button" data-universal-mode="overview" aria-pressed="false">Overview</button>
-            <button type="button" data-universal-mode="insights" class="is-active" aria-pressed="true"><span aria-hidden="true">✦</span> Business Insights</button>
+            <button type="button" data-universal-mode="overview" class="is-active" aria-pressed="true">Overview</button>
+            <button type="button" data-universal-mode="insights" aria-pressed="false"><span aria-hidden="true">✦</span> Business Insights</button>
           </div>
-          <section id="universal-quick-insights" class="universal-quick-insights" aria-labelledby="universal-quick-insights-title">
-            <span id="universal-quick-insights-title" class="universal-quick-insights-title">Quick Insights</span>
-            <nav class="universal-insight-nav" aria-label="Quick Insights">
-              <button type="button" data-quick-insight="top-performers" class="is-active" aria-pressed="true">Top Performers</button>
-              <button type="button" data-quick-insight="needs-attention" aria-pressed="false">Needs Attention</button>
-              <button type="button" data-quick-insight="rto-risk" aria-pressed="false">RTO Risk</button>
-              <button type="button" data-quick-insight="ndr-risk" aria-pressed="false">NDR Risk</button>
-              <button type="button" data-quick-insight="high-volume" aria-pressed="false">High Volume</button>
-              <button type="button" data-quick-insight="best-categories" aria-pressed="false">Best Categories</button>
-              <button type="button" data-quick-insight="best-couriers" aria-pressed="false">Best Couriers</button>
-            </nav>
-          </section>
         </div>
 
         <form id="universal-filters" class="universal-report-controls" aria-label="Universal Report controls">
@@ -372,9 +360,22 @@
 
         <div id="universal-summary" class="universal-summary" aria-live="polite"></div>
 
+        <section id="universal-quick-insights" class="universal-quick-insights" aria-labelledby="universal-quick-insights-title" hidden>
+          <div class="universal-quick-insights-heading"><span id="universal-quick-insights-title" class="universal-quick-insights-title">Choose an insight</span><span>Ranked analytics</span></div>
+          <nav class="universal-insight-nav" aria-label="Business insights">
+            <button type="button" data-quick-insight="top-performers" class="is-active" aria-pressed="true">Top Performers</button>
+            <button type="button" data-quick-insight="needs-attention" aria-pressed="false">Needs Attention</button>
+            <button type="button" data-quick-insight="rto-risk" aria-pressed="false">RTO Risk</button>
+            <button type="button" data-quick-insight="ndr-risk" aria-pressed="false">NDR Risk</button>
+            <button type="button" data-quick-insight="high-volume" aria-pressed="false">High Volume</button>
+            <button type="button" data-quick-insight="best-categories" aria-pressed="false">Best Categories</button>
+            <button type="button" data-quick-insight="best-couriers" aria-pressed="false">Best Couriers</button>
+          </nav>
+        </section>
+
         <section id="universal-insight-results" class="universal-insight-results" aria-labelledby="universal-insight-title" hidden>
           <div class="section-heading">
-            <div><p class="eyebrow">BUSINESS INSIGHT</p><h2 id="universal-insight-title">Top Performing Products</h2><p id="universal-insight-description" class="universal-insight-description"></p></div>
+            <div><p class="eyebrow">BUSINESS INSIGHT</p><h2 id="universal-insight-title">Top Performing Products</h2><p id="universal-insight-description" class="universal-insight-description"></p><div class="universal-insight-meta"><span id="universal-insight-rule"></span><span id="universal-insight-threshold"></span></div></div>
             <p id="universal-insight-summary" aria-live="polite"></p>
           </div>
           <div id="universal-insight-content" aria-live="polite"></div>
