@@ -123,10 +123,13 @@ async function classifyProcess(job, stage, cancelled = async () => false) {
   recordDuration(performanceTimings, 'mappingContextMs', mappingContextStartedAt);
   if (!await stage('mapping_statuses') || await cancelled()) return { cancelled: true };
   if (await cancelled() || !await stage('checking_products') || !await stage('ai_product_classification')) return { cancelled: true };
-  const result = await processValidatedUpload(job.input, { statusMappings, productMappings, masterCategories, productCategories, suggestions, performanceTimings, productClassifier: { classifyProducts: (products, taxonomy) => productClassifier.classifyProducts(products, taxonomy, { isCancelled: cancelled, onProgress: (productClassificationProgress) => processingStore.publish(job, { productClassificationProgress }) }) }, taxonomyResolver: (suggestion) => mappingStore.resolveGeminiTaxonomy(job.clientId, suggestion), includeRows: false });
+  const result = await processValidatedUpload(job.input, { statusMappings, productMappings, masterCategories, productCategories, suggestions, performanceTimings, productClassifier: { classifyProducts: (products, taxonomy) => productClassifier.classifyProducts(products, taxonomy, { isCancelled: cancelled, onProgress: (productClassificationProgress) => processingStore.publish(job, { productClassificationProgress }) }) }, includeRows: false });
   result.__performance = performanceTimings;
   if (await cancelled()) return { cancelled: true };
   const products = result.classifications.products;
+  // Persist the complete review snapshot before ProcessingStore exposes
+  // review_required, so the client never opens an empty review window.
+  if (!await stage('preparing_review') || await cancelled()) return { cancelled: true };
   await mappingStore.saveSuggestions(clientId, products);
   if (await cancelled()) return { cancelled: true };
   const unresolved = result.classifications.statuses.some((item) => item.classificationRequired) || products.some((item) => item.classificationRequired);
@@ -167,6 +170,8 @@ async function applyReviewDecision(job, kind, value, body) {
       update = { suggestionStatus: 'Client Rejected', status: 'Client Rejected', classificationRequired: true, manualReason: 'AI suggestion rejected. Please assign a category manually.', suggestedCategory: null, suggestedMasterCategory: null, suggestedProductCategory: null, mappingSource: 'needs-review' };
     } else {
       const source = action === 'change' ? 'Client Modified' : action === 'approve' ? 'AI Approved' : 'Manual';
+      // Suggested taxonomy is materialized only after this client decision.
+      await mappingStore.resolveGeminiTaxonomy(clientId, body || {});
       const mapping = await mappingStore.saveProductMapping(clientId, value, { masterCategory: body?.masterCategory, productCategory: body?.productCategory, source });
       update = { masterCategory: mapping.masterCategory, productCategory: mapping.productCategory, category: mapping.productCategory, mappingSource: source, suggestionStatus: source, status: source, classificationRequired: false, manualReason: null };
       await mappingStore.decideSuggestion(clientId, value, source, update);
@@ -195,7 +200,7 @@ app.post('/api/report-processes/:processId/products/retry', universalRoute(async
     const current = await processingStore.get(clientId, job.processId, { includeRows: false });
     items = (current?.result?.classifications?.products || []).filter(eligible);
     const context = await mappingStore.classificationContext(clientId, items.map((item) => ({ originalProductName: item.value, originalStatus: '' })));
-    const result = await classifyProducts(items.map((item) => item.value), { ...context, mappings: context.productMappings, provider: productClassifier, taxonomyResolver: (suggestion) => mappingStore.resolveGeminiTaxonomy(clientId, suggestion), retry: true });
+    const result = await classifyProducts(items.map((item) => item.value), { ...context, mappings: context.productMappings, provider: productClassifier, retry: true });
     const latest = await processingStore.get(clientId, job.processId, { includeRows: false });
     if (latest?.status !== 'review_required' || latest.productRetry?.token !== claim.token || !productRetryActive(latest)) return response.status(409).json({ message: 'This review changed. Reload to see its current state.' });
     const counts = new Map(items.map((item) => [item.value, item.count]));
@@ -238,13 +243,13 @@ app.post('/api/report-processes/:processId/review/:kind/bulk', async (request, r
       updates = [];
       if (rejected.length) { const rejectedValues = rejected.map((decision) => decision.value); await mappingStore.decideSuggestions(clientId, rejectedValues, 'Client Rejected'); updates.push(...rejectedValues.map((value) => ({ value, suggestionStatus: 'Client Rejected', status: 'Client Rejected', classificationRequired: true, manualReason: 'AI suggestion rejected. Please assign a category manually.', suggestedCategory: null, suggestedMasterCategory: null, suggestedProductCategory: null, mappingSource: 'needs-review' }))); }
       const groups = new Map(); approved.forEach((decision) => { const source = decision.action === 'change' ? 'Client Modified' : decision.action === 'approve' ? 'AI Approved' : 'Manual'; const key = `${source}\u001f${decision.masterCategory}\u001f${decision.productCategory}`; const group = groups.get(key) || { source, masterCategory: decision.masterCategory, productCategory: decision.productCategory, values: [] }; group.values.push(decision.value); groups.set(key, group); });
-      const taxonomy = approved.length ? await mappingStore.taxonomySnapshot(clientId) : null;
-      for (const group of groups.values()) { const mappings = await mappingStore.saveProductMappings(clientId, group.values, { ...group, taxonomy }); await mappingStore.decideSuggestions(clientId, group.values, group.source, group); updates.push(...mappings.map((mapping) => ({ value: mapping.originalExample, masterCategory: mapping.masterCategory, productCategory: mapping.productCategory, category: mapping.productCategory, mappingSource: group.source, suggestionStatus: group.source, status: group.source, classificationRequired: false, manualReason: null }))); }
+      for (const group of groups.values()) { await mappingStore.resolveGeminiTaxonomy(clientId, group); const mappings = await mappingStore.saveProductMappings(clientId, group.values, { ...group, taxonomy: await mappingStore.taxonomySnapshot(clientId) }); await mappingStore.decideSuggestions(clientId, group.values, group.source, group); updates.push(...mappings.map((mapping) => ({ value: mapping.originalExample, masterCategory: mapping.masterCategory, productCategory: mapping.productCategory, category: mapping.productCategory, mappingSource: group.source, suggestionStatus: group.source, status: group.source, classificationRequired: false, manualReason: null }))); }
     } else if (request.body?.action === 'reject') {
       await mappingStore.decideSuggestions(clientId, values, 'Client Rejected');
       updates = values.map((value) => ({ value, suggestionStatus: 'Client Rejected', status: 'Client Rejected', classificationRequired: true, manualReason: 'AI suggestion rejected. Please assign a category manually.', suggestedCategory: null, suggestedMasterCategory: null, suggestedProductCategory: null, mappingSource: 'needs-review' }));
     } else {
       const source = request.body?.action === 'change' ? 'Client Modified' : request.body?.action === 'approve' ? 'AI Approved' : 'Manual';
+      await mappingStore.resolveGeminiTaxonomy(clientId, request.body || {});
       const mappings = await mappingStore.saveProductMappings(clientId, values, { masterCategory: request.body?.masterCategory, productCategory: request.body?.productCategory, source });
       updates = mappings.map((mapping) => ({ value: mapping.originalExample, masterCategory: mapping.masterCategory, productCategory: mapping.productCategory, category: mapping.productCategory, mappingSource: source, suggestionStatus: source, status: source, classificationRequired: false, manualReason: null }));
       await mappingStore.decideSuggestions(clientId, values, source, { masterCategory: request.body?.masterCategory, productCategory: request.body?.productCategory });
