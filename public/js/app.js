@@ -1,7 +1,8 @@
 
 const uploadLimits = globalThis.DeliveryIQLimits;
 const ACTIVE_PROCESS_STATUSES = new Set(['queued', 'processing', 'review_required', 'finalizing', 'failed']);
-const state = { upload: null, result: null, processId: null, selectedReportType: null, config: { statusCategories: ['Delivered', 'In Transit', 'NDR', 'RTO', 'Cancelled', 'Other'], masterCategories: [], productCategories: [] }, reportId: null, restoring: true, restorePromise: null, validating: false, cancelling: false, configLoaded: false, retryingProduct: null, bulkRetry: null, approvedProductsOpen: false, openSuggestionHistories: new Set(), productErrors: new Map(), productSaving: new Set(), selectedProducts: new Set(), selectedStatuses: new Set(), statusSaving: new Set(), statusBulkSaving: false, statusBulkError: '', statusErrors: new Map(), bulkSaving: false, bulkAction: '', bulkError: '', reviewFeedback: '', generating: false, universal: { page: 1, limit: 25, controller: null, detailCache: new Map(), loading: false }, mappingAdmin: { products: null, masters: null, categories: null, statuses: null, productRequest: 0, statusRequest: 0, productLoading: false, statusLoading: false, productSaveGeneration: 0, statusSaveGeneration: 0, productSavingCount: 0, statusSavingCount: 0, categorySaving: false } };
+const MAPPING_PAGE_SIZE = 30;
+const state = { upload: null, result: null, processId: null, selectedReportType: null, config: { statusCategories: ['Delivered', 'In Transit', 'NDR', 'RTO', 'Cancelled', 'Other'], masterCategories: [], productCategories: [] }, reportId: null, restoring: true, restorePromise: null, validating: false, cancelling: false, configLoaded: false, retryingProduct: null, bulkRetry: null, approvedProductsOpen: false, openSuggestionHistories: new Set(), productErrors: new Map(), productSaving: new Set(), selectedProducts: new Set(), selectedStatuses: new Set(), statusSaving: new Set(), statusBulkSaving: false, statusBulkError: '', statusErrors: new Map(), bulkSaving: false, bulkAction: '', bulkError: '', reviewFeedback: '', generating: false, universal: { page: 1, limit: 25, controller: null, detailCache: new Map(), loading: false }, mappingAdmin: { products: null, masters: null, categories: null, statuses: null, productRequest: 0, statusRequest: 0, productLoading: false, statusLoading: false, productVisibleCount: MAPPING_PAGE_SIZE, statusVisibleCount: MAPPING_PAGE_SIZE, productSaveGeneration: 0, statusSaveGeneration: 0, productSavingCount: 0, statusSavingCount: 0, categorySaving: false } };
 const $ = (selector) => document.querySelector(selector);
 $('#upload-help').textContent = `CSV or XLSX · Up to ${uploadLimits.maxSourceRows.toLocaleString('en-US')} non-empty rows · ${uploadLimits.maxFileBytes / (1024 * 1024)} MB maximum`;
 function el(tag, text, className) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; }
@@ -527,6 +528,35 @@ function renderMappingTable(target, rows, kind) {
   head.append(header); const body = el('tbody'); rows.forEach((item) => body.append(mappingRow(item, kind)));
   table.append(head, body); clear(target); target.append(table);
 }
+function resetMappingPagination(kind) {
+  state.mappingAdmin[`${kind}VisibleCount`] = MAPPING_PAGE_SIZE;
+}
+function renderMappingPagination(target, kind, filtered) {
+  const admin = state.mappingAdmin;
+  const visibleCount = Math.min(admin[`${kind}VisibleCount`], filtered.length);
+  const count = kind === 'product' ? $('#product-mapping-count') : $('#status-mapping-count');
+  count.textContent = `Showing ${visibleCount} of ${filtered.length} mappings`;
+  target.querySelector('.mapping-load-more')?.remove();
+  if (visibleCount >= filtered.length) return;
+  const actions = el('div', undefined, 'mapping-load-more');
+  const button = el('button', 'Load more', 'button button-secondary');
+  button.type = 'button';
+  button.setAttribute('aria-label', `Load 30 more ${kind} mappings`);
+  button.addEventListener('click', () => {
+    if (button.disabled) return;
+    button.disabled = true; button.textContent = 'Loading…';
+    const nextVisibleCount = Math.min(visibleCount + MAPPING_PAGE_SIZE, filtered.length);
+    target.querySelector('tbody').append(...filtered.slice(visibleCount, nextVisibleCount).map((item) => mappingRow(item, kind)));
+    admin[`${kind}VisibleCount`] = nextVisibleCount;
+    renderMappingPagination(target, kind, filtered);
+  });
+  actions.append(button); target.append(actions);
+}
+function mappingPagination(target, kind, filtered) {
+  const visible = filtered.slice(0, Math.min(state.mappingAdmin[`${kind}VisibleCount`], filtered.length));
+  renderMappingTable(target, visible, kind);
+  renderMappingPagination(target, kind, filtered);
+}
 function updateProductSourceChoices() {
   const labels = [...new Set((state.mappingAdmin.products || []).map((item) => mappingBadgeInfo(item, 'product').label))];
   choices($('#product-source-filter'), labels, 'All sources');
@@ -539,13 +569,13 @@ function renderProductMappings() {
   const category = $('#product-category-filter').value;
   const source = $('#product-source-filter').value;
   const filtered = all.filter((item) => item.originalExample.toLocaleLowerCase().includes(search) && (!category || (item.productCategory || item.category) === category) && (!source || mappingBadgeInfo(item, 'product').label === source));
-  $('#product-mapping-count').textContent = `${filtered.length} of ${all.length} mappings`;
   if (!filtered.length) {
+    $('#product-mapping-count').textContent = `Showing 0 of 0 mappings`;
     if (!all.length) mappingState(target, 'No product mappings yet', 'Mappings appear here after products are approved during report review.');
-    else mappingState(target, 'No matching products', 'Try a different search or clear the filters.', () => { $('#product-search').value = ''; $('#product-category-filter').value = ''; $('#product-source-filter').value = ''; renderProductMappings(); $('#product-search').focus(); }, 'Clear filters');
+    else mappingState(target, 'No matching products', 'Try a different search or clear the filters.', () => { $('#product-search').value = ''; $('#product-category-filter').value = ''; $('#product-source-filter').value = ''; resetMappingPagination('product'); renderProductMappings(); $('#product-search').focus(); }, 'Clear filters');
     return;
   }
-  renderMappingTable(target, filtered, 'product');
+  mappingPagination(target, 'product', filtered);
 }
 function renderStatusMappings() {
   if (state.mappingAdmin.statuses === null) return;
@@ -555,13 +585,13 @@ function renderStatusMappings() {
   const category = $('#status-category-filter').value;
   const source = $('#status-source-filter').value;
   const filtered = all.filter((item) => item.originalExample.toLocaleLowerCase().includes(search) && (!category || item.category === category) && (!source || mappingBadgeInfo(item, 'status').label === source));
-  $('#status-mapping-count').textContent = `${filtered.length} of ${all.length} mappings`;
   if (!filtered.length) {
+    $('#status-mapping-count').textContent = `Showing 0 of 0 mappings`;
     if (!all.length) mappingState(target, 'No status mappings yet', 'Status mappings appear here after a courier status is classified.');
-    else mappingState(target, 'No matching statuses', 'Try a different search or clear the filters.', () => { $('#status-search').value = ''; $('#status-category-filter').value = ''; $('#status-source-filter').value = ''; renderStatusMappings(); $('#status-search').focus(); }, 'Clear filters');
+    else mappingState(target, 'No matching statuses', 'Try a different search or clear the filters.', () => { $('#status-search').value = ''; $('#status-category-filter').value = ''; $('#status-source-filter').value = ''; resetMappingPagination('status'); renderStatusMappings(); $('#status-search').focus(); }, 'Clear filters');
     return;
   }
-  renderMappingTable(target, filtered, 'status');
+  mappingPagination(target, 'status', filtered);
 }
 async function mappingResponse(url) {
   const response = await fetch(url);
@@ -578,7 +608,7 @@ async function loadStatuses() {
   try {
     const payload = await mappingResponse('/api/mappings/status');
     if (request !== admin.statusRequest || saveGeneration !== admin.statusSaveGeneration || admin.statusSavingCount) return;
-    admin.statuses = payload.mappings; admin.statusLoading = false;
+    admin.statuses = payload.mappings; admin.statusLoading = false; resetMappingPagination('status');
     renderStatusMappings();
   } catch (error) {
     if (request !== admin.statusRequest || saveGeneration !== admin.statusSaveGeneration || admin.statusSavingCount) return;
@@ -597,7 +627,7 @@ async function loadProducts() {
       mappingResponse('/api/mappings/product'), mappingResponse('/api/master-categories'), mappingResponse('/api/product-categories')
     ]);
     if (request !== admin.productRequest || saveGeneration !== admin.productSaveGeneration || admin.productSavingCount) return;
-    admin.products = maps.mappings; admin.masters = masters.categories; admin.categories = categories.categories; admin.productLoading = false;
+    admin.products = maps.mappings; admin.masters = masters.categories; admin.categories = categories.categories; admin.productLoading = false; resetMappingPagination('product');
     state.config.masterCategories = masters.categories; state.config.productCategories = categories.categories;
     choices($('#product-category-filter'), categories.categories.filter((item) => item.active).map((item) => item.name), 'All categories');
     updateProductSourceChoices(); renderCategoryLists(); renderProductMappings();
@@ -649,7 +679,7 @@ async function createProductCategory(event) {
     admin.categorySaving = false; button.disabled = false; button.textContent = 'Create category'; fields.forEach((field) => { field.disabled = false; });
   }
 }
-$('#file-upload')?.addEventListener('change', (event) => validateFile(event.target.files[0])); $('#upload-dropzone')?.addEventListener('drop', (event) => { event.preventDefault(); $('#upload-dropzone').classList.remove('is-dragging'); if ($('#file-upload').disabled) return; validateFile(event.dataTransfer.files[0]); }); ['dragover', 'dragenter'].forEach((name) => $('#upload-dropzone')?.addEventListener(name, (event) => { event.preventDefault(); if (!$('#file-upload').disabled) $('#upload-dropzone').classList.add('is-dragging'); })); ['dragleave', 'dragend'].forEach((name) => $('#upload-dropzone')?.addEventListener(name, () => $('#upload-dropzone').classList.remove('is-dragging'))); $('#remove-selected-file')?.addEventListener('click', resetSelectedFile); document.querySelectorAll('[data-report-type]').forEach((button) => button.addEventListener('click', () => selectReportType(button.dataset.reportType))); $('#change-report-type')?.addEventListener('click', changeReportType); $('#clear-current-result')?.addEventListener('click', removeReportModal); $('#report-filters')?.addEventListener('submit', (event) => { event.preventDefault(); viewReport(state.reportId); }); $('#clear-report-filters')?.addEventListener('click', () => { $('#report-filters').reset(); viewReport(state.reportId); }); $('#category-form')?.addEventListener('submit', createProductCategory); $('#status-search')?.addEventListener('input', renderStatusMappings); $('#status-category-filter')?.addEventListener('change', renderStatusMappings); $('#status-source-filter')?.addEventListener('change', renderStatusMappings); $('#product-search')?.addEventListener('input', renderProductMappings); $('#product-category-filter')?.addEventListener('change', renderProductMappings); $('#product-source-filter')?.addEventListener('change', renderProductMappings); $('#logout-button')?.addEventListener('click', async () => { const button = $('#logout-button'); button.disabled = true; try { await fetch('/api/auth/logout', { method: 'POST' }); } finally { location.assign('/login'); } }); const pageFromLocation = () => { const name = location.pathname.slice(1); return ['dashboard', 'upload', 'reports', 'universal', 'products', 'statuses', 'history', 'settings'].includes(name) ? name : 'dashboard'; }; window.addEventListener('popstate', () => page(pageFromLocation())); document.body.classList.add('upload-restoring'); page(pageFromLocation()); if (!state.configLoaded) refreshConfig().catch(() => {}); fetch('/api/health').then((r) => r.json()).then(() => { $('#service-status').textContent = 'Service online'; }).catch(() => { $('#service-status').textContent = 'Service unavailable'; });
+$('#file-upload')?.addEventListener('change', (event) => validateFile(event.target.files[0])); $('#upload-dropzone')?.addEventListener('drop', (event) => { event.preventDefault(); $('#upload-dropzone').classList.remove('is-dragging'); if ($('#file-upload').disabled) return; validateFile(event.dataTransfer.files[0]); }); ['dragover', 'dragenter'].forEach((name) => $('#upload-dropzone')?.addEventListener(name, (event) => { event.preventDefault(); if (!$('#file-upload').disabled) $('#upload-dropzone').classList.add('is-dragging'); })); ['dragleave', 'dragend'].forEach((name) => $('#upload-dropzone')?.addEventListener(name, () => $('#upload-dropzone').classList.remove('is-dragging'))); $('#remove-selected-file')?.addEventListener('click', resetSelectedFile); document.querySelectorAll('[data-report-type]').forEach((button) => button.addEventListener('click', () => selectReportType(button.dataset.reportType))); $('#change-report-type')?.addEventListener('click', changeReportType); $('#clear-current-result')?.addEventListener('click', removeReportModal); $('#report-filters')?.addEventListener('submit', (event) => { event.preventDefault(); viewReport(state.reportId); }); $('#clear-report-filters')?.addEventListener('click', () => { $('#report-filters').reset(); viewReport(state.reportId); }); $('#category-form')?.addEventListener('submit', createProductCategory); $('#status-search')?.addEventListener('input', () => { resetMappingPagination('status'); renderStatusMappings(); }); $('#status-category-filter')?.addEventListener('change', () => { resetMappingPagination('status'); renderStatusMappings(); }); $('#status-source-filter')?.addEventListener('change', () => { resetMappingPagination('status'); renderStatusMappings(); }); $('#product-search')?.addEventListener('input', () => { resetMappingPagination('product'); renderProductMappings(); }); $('#product-category-filter')?.addEventListener('change', () => { resetMappingPagination('product'); renderProductMappings(); }); $('#product-source-filter')?.addEventListener('change', () => { resetMappingPagination('product'); renderProductMappings(); }); $('#logout-button')?.addEventListener('click', async () => { const button = $('#logout-button'); button.disabled = true; try { await fetch('/api/auth/logout', { method: 'POST' }); } finally { location.assign('/login'); } }); const pageFromLocation = () => { const name = location.pathname.slice(1); return ['dashboard', 'upload', 'reports', 'universal', 'products', 'statuses', 'history', 'settings'].includes(name) ? name : 'dashboard'; }; window.addEventListener('popstate', () => page(pageFromLocation())); document.body.classList.add('upload-restoring'); page(pageFromLocation()); if (!state.configLoaded) refreshConfig().catch(() => {}); fetch('/api/health').then((r) => r.json()).then(() => { $('#service-status').textContent = 'Service online'; }).catch(() => { $('#service-status').textContent = 'Service unavailable'; });
 function closeMobileMenu() { const menu = $('#mobile-navigation'); const backdrop = $('#mobile-menu-backdrop'); if (!menu) return; menu.hidden = true; backdrop.hidden = true; $('.menu-button').setAttribute('aria-expanded', 'false'); document.body.classList.remove('mobile-menu-open'); }
 function openMobileMenu() { const menu = $('#mobile-navigation'); const backdrop = $('#mobile-menu-backdrop'); if (!menu) return; menu.hidden = false; backdrop.hidden = false; $('.menu-button').setAttribute('aria-expanded', 'true'); document.body.classList.add('mobile-menu-open'); menu.querySelector('.mobile-menu-close').focus(); }
 (function setupMobileMenu() { const menu = $('#mobile-navigation'); const links = $('#mobile-navigation-links'); const button = $('.menu-button'); if (!menu || !links || !button) return; document.querySelectorAll('.sidebar .nav-link').forEach((link) => { const clone = link.cloneNode(true); clone.addEventListener('click', closeMobileMenu); links.append(clone); }); button.addEventListener('click', () => menu.hidden ? openMobileMenu() : closeMobileMenu()); $('#mobile-menu-backdrop').addEventListener('click', closeMobileMenu); menu.querySelector('.mobile-menu-close').addEventListener('click', closeMobileMenu); document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !menu.hidden) closeMobileMenu(); }); }());

@@ -2609,6 +2609,8 @@ button:disabled {
 .category-chip.is-inactive { background: #f7f8fa; color: #7a8799; }
 
 .management-list { min-width: 0; }
+.mapping-load-more { display: flex; justify-content: center; padding-top: 15px; }
+.mapping-load-more .button { min-height: 38px; }
 .mapping-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: .78rem; }
 .mapping-table thead { background: #f5f7fb; }
 .mapping-table th { padding: 10px 11px; border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); color: #56657b; font-size: .65rem; font-weight: 850; letter-spacing: .04em; text-align: left; text-transform: uppercase; }
