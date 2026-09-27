@@ -10,7 +10,7 @@ const answer = (product, extra = {}) => ({ product, masterCategory: 'Beauty', pr
 const response = (results) => ({ ok: true, status: 200, text: async () => JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ results }) }] } }] }) });
 const csvInput = (names) => validateUpload({ originalname: 'synthetic.csv', buffer: Buffer.from('Order ID,Order Date,Order Status,Product Name,Payment Mode\n' + names.map((name, i) => `${i},2026-01-01,Delivered,${name},COD`).join('\n')) }, { classify: false, templateType: 'simple' });
 
-test('request uses minimal tenant taxonomy, constrained enums, product names only and no metadata', async () => {
+test('request uses tenant taxonomy and permits new category names in the structured response', async () => {
   let captured;
   const provider = new GeminiProductClassifier({ apiKey: 'synthetic', fetchImpl: async (_url, options) => { captured = JSON.parse(options.body); return response([answer('Brand Serum')]); } });
   const result = await processValidatedUpload(csvInput(['Brand Serum', 'Brand Serum']), { masterCategories: [{ name: 'Beauty', clientId: 'tenant-a', active: true }, { name: 'Secret', active: false }], productCategories: [{ name: 'Serum', masterCategory: 'Beauty', clientId: 'tenant-a', _id: 'private-id', updatedBy: 'private-user' }, { name: 'Hidden', masterCategory: 'Secret' }, { name: 'Inactive', masterCategory: 'Beauty', active: false }], productClassifier: provider });
@@ -20,10 +20,10 @@ test('request uses minimal tenant taxonomy, constrained enums, product names onl
   assert.deepEqual(content.existingProductCategories, [{ name: 'Serum', masterCategory: 'Beauty' }]);
   assert.deepEqual(Object.keys(content).sort(), ['existingMasterCategories', 'existingProductCategories', 'instruction', 'products']);
   assert.doesNotMatch(JSON.stringify(captured), /tenant-a|private-id|private-user|COD|2026-01-01|synthetic.csv/);
-  assert.match(content.instruction, /Never invent/);
+  assert.match(content.instruction, /New categories are allowed/);
   const fields = captured.generationConfig.responseSchema.properties.results.items.properties;
-  assert.deepEqual(fields.masterCategory.enum, ['Beauty', 'NO_MATCH']);
-  assert.deepEqual(fields.productCategory.enum, ['Serum', 'NO_MATCH']);
+  assert.equal(fields.masterCategory.enum, undefined);
+  assert.equal(fields.productCategory.enum, undefined);
   assert.equal(result.classifications.products[0].suggestionStatus, 'AI Suggested');
   assert.equal(result.classifications.products[0].classificationRequired, true);
 });
@@ -36,19 +36,20 @@ test('only pending normalized unknowns reach the provider; valid prior suggestio
   assert.equal(result.items.find((x) => x.value === 'Rejected').suggestionStatus, 'Client Rejected');
 });
 
-test('server rejects invented categories, incorrect parents, omitted products, duplicates and foreign products', () => {
-  const parsed = validateGeminiResults({ results: [answer('good'), answer('good'), answer('invented', { productCategory: 'New type' }), answer('wrong-parent', { masterCategory: 'Home' }), answer('foreign'), answer('none', { masterCategory: 'NO_MATCH', productCategory: 'NO_MATCH' })] }, ['good', 'invented', 'wrong-parent', 'none', 'omitted'], taxonomy);
-  assert.deepEqual(parsed.map((x) => x.product), ['good', 'none']);
-  assert.equal(parsed[1].productCategory, 'NO_MATCH');
+test('server accepts usable new categories but rejects malformed and partial classifications', () => {
+  const parsed = validateGeminiResults({ results: [answer('good'), answer('good'), answer('invented', { productCategory: 'New type' }), answer('wrong-parent', { masterCategory: 'Home' }), answer('none', { masterCategory: 'NO_MATCH', productCategory: 'NO_MATCH' }), answer('partial', { masterCategory: 'NO_MATCH', productCategory: 'Serum' })] }, ['good', 'invented', 'wrong-parent', 'none', 'partial'], taxonomy);
+  assert.deepEqual(parsed.map((x) => x.product), ['good', 'invented', 'wrong-parent', 'none']);
+  assert.equal(parsed[1].productCategory, 'New type');
+  assert.equal(parsed[3].productCategory, 'NO_MATCH');
 });
 
-test('No Match differs from Failed; empty taxonomy never calls Gemini', async () => {
+test('No Match differs from Failed; empty taxonomy calls Gemini for a possible new pair', async () => {
   let calls = 0;
-  const provider = new GeminiProductClassifier({ apiKey: 'synthetic', fetchImpl: async () => { calls++; return response([answer('Mystery', { masterCategory: 'NO_MATCH', productCategory: 'NO_MATCH' })]); } });
+  const provider = new GeminiProductClassifier({ apiKey: 'synthetic', fetchImpl: async (_url, options) => { calls++; const [product] = JSON.parse(JSON.parse(options.body).contents[0].parts[0].text).products; return response([answer(product, { masterCategory: 'NO_MATCH', productCategory: 'NO_MATCH' })]); } });
   const none = await classifyProducts(['Mystery'], { ...taxonomy, provider });
   assert.equal(none.items[0].suggestionStatus, 'No Match'); assert.equal(none.providerUnavailable, false);
   const empty = await classifyProducts(['Other'], { provider });
-  assert.equal(empty.items[0].suggestionStatus, 'No Match'); assert.equal(calls, 1);
+  assert.equal(empty.items[0].suggestionStatus, 'No Match'); assert.equal(calls, 2);
   const invalid = await classifyProducts(['Other'], { ...taxonomy, provider: { classifyProducts: () => ({ results: [answer('Other', { productCategory: 'Invented' })] }) } });
   assert.equal(invalid.items[0].suggestionStatus, 'Failed');
 });
@@ -236,11 +237,11 @@ test('schema enum budget is bounded while large taxonomies remain fully enforced
     const provider = new GeminiProductClassifier({ apiKey: 'synthetic', fetchImpl: async (_url, options) => { captured = JSON.parse(options.body); return response([answer('Known', { productCategory: 'Type 0' }), answer('Invented', { productCategory: 'Never allowed' })]); } });
     const result = await provider.classifyProducts(['Known', 'Invented'], large);
     const fields = captured.generationConfig.responseSchema.properties.results.items.properties;
-    assert.equal(Boolean(fields.masterCategory.enum), count === 197);
-    assert.equal(Boolean(fields.productCategory.enum), count === 197);
+    assert.equal(fields.masterCategory.enum, undefined);
+    assert.equal(fields.productCategory.enum, undefined);
     assert.equal(JSON.parse(captured.contents[0].parts[0].text).existingProductCategories.length, count);
-    assert.deepEqual(result.results.map((x) => x.product), ['Known']);
-    assert.deepEqual(result.failedProducts, ['Invented']);
+    assert.deepEqual(result.results.map((x) => x.product), ['Known', 'Invented']);
+    assert.deepEqual(result.failedProducts, []);
   }
 });
 
@@ -284,4 +285,36 @@ test('suggestion history keeps expansion through rerenders without leaking acros
   assert.equal(render('Serum').open, false);
   replacement.open = true; replacement.toggle(); state.processId = 'two';
   assert.equal(render('Serum').open, false);
+});
+
+test('Gemini taxonomy resolution reuses normalized masters and scopes products by master ID', async () => {
+  const store = new MappingStore({ mongoUri: null });
+  const electronics = await store.saveMaster('tenant', 'Electronics');
+  const fashion = await store.saveMaster('tenant', 'Fashion');
+  const electronicAccessories = await store.saveCategory('tenant', 'Accessories', electronics._id);
+  const fashionAccessories = await store.saveCategory('tenant', 'Accessories', fashion._id);
+  const existing = await store.resolveGeminiTaxonomy('tenant', { masterCategory: ' electronics ', productCategory: ' accessories ' });
+  assert.equal(String(existing.masterCategoryId), String(electronics._id)); assert.equal(String(existing._id), String(electronicAccessories._id));
+  const scoped = await store.resolveGeminiTaxonomy('tenant', { masterCategory: 'Fashion', productCategory: 'Accessories' });
+  assert.equal(String(scoped.masterCategoryId), String(fashion._id)); assert.equal(String(scoped._id), String(fashionAccessories._id));
+  const newProduct = await store.resolveGeminiTaxonomy('tenant', { masterCategory: 'ELECTRONICS', productCategory: 'Headphones' });
+  assert.equal(String(newProduct.masterCategoryId), String(electronics._id));
+  assert.equal((await store.listMasters('tenant', true)).length, 2); assert.equal((await store.listCategories('tenant', true)).length, 3);
+});
+
+test('Gemini taxonomy resolution creates new pairs once across retries and concurrent requests', async () => {
+  const store = new MappingStore({ mongoUri: null });
+  const suggestions = { masterCategory: 'Home & Kitchen', productCategory: 'Cookware' };
+  const resolved = await Promise.all(Array.from({ length: 8 }, () => store.resolveGeminiTaxonomy('tenant', suggestions)));
+  assert.equal(new Set(resolved.map((x) => String(x.masterCategoryId))).size, 1);
+  assert.equal(new Set(resolved.map((x) => String(x._id))).size, 1);
+  assert.equal((await store.listMasters('tenant', true)).length, 1); assert.equal((await store.listCategories('tenant', true)).length, 1);
+});
+
+test('valid Gemini new taxonomy is AI Suggested rather than Failed without approving the mapping', async () => {
+  const store = new MappingStore({ mongoUri: null });
+  const result = await classifyProducts(['Noise Cancelling Headphones'], { provider: { classifyProducts: () => ({ results: [answer('Noise Cancelling Headphones', { masterCategory: 'Electronics', productCategory: 'Headphones' })] }) }, taxonomyResolver: (suggestion) => store.resolveGeminiTaxonomy('tenant', suggestion) });
+  assert.equal(result.items[0].suggestionStatus, 'AI Suggested'); assert.equal(result.items[0].classificationRequired, true);
+  assert.equal((await store.list('product', 'tenant')).length, 0);
+  assert.equal((await store.listMasters('tenant', true)).length, 1); assert.equal((await store.listCategories('tenant', true)).length, 1);
 });

@@ -26,7 +26,7 @@ function matchTaxonomyPair(taxonomy, master, product) {
 function reviewState(item, status, reason) {
   Object.assign(item, { suggestedCategory: null, suggestedProductCategory: null, suggestedMasterCategory: null, confidence: null, suggestionReason: null, mappingSource: 'needs-review', classificationRequired: true, suggestionStatus: status, manualReason: reason });
 }
-function classifyProducts(products, { mappings = [], categories = [], masterCategories = [], productCategories, suggestions = [], provider, retry = false } = {}) {
+function classifyProducts(products, { mappings = [], categories = [], masterCategories = [], productCategories, suggestions = [], provider, taxonomyResolver, retry = false } = {}) {
   const current = buildTaxonomy(productCategories || categories, masterCategories);
   const unique = new Map();
   for (const value of products) {
@@ -50,16 +50,18 @@ function classifyProducts(products, { mappings = [], categories = [], masterCate
     if (!retry && pair) {
       Object.assign(item, { suggestedCategory: pair.name, suggestedProductCategory: pair.name, suggestedMasterCategory: pair.masterCategory, confidence: previous.confidence ?? null, suggestionReason: previous.reason || null, mappingSource: 'ai-suggested', suggestionStatus: 'AI Suggested', model: previous.model || null }); return item;
     }
-    // Failed/legacy Needs Review and stale suggestions are eligible again. A
-    // genuine no-match can also be reconsidered against a changed taxonomy.
-    if (!current.productCategories.length) { reviewState(item, 'No Match', 'No suitable existing category is available. Select or create categories manually, then reclassify if needed.'); return item; }
+    // Failed/legacy Needs Review and stale suggestions are eligible again. Empty
+    // taxonomies are sent to Gemini so it can propose the first valid pair.
     pending.push(item); return item;
   });
-  const apply = (response = {}) => {
+  const apply = async (response = {}) => {
     const byProduct = new Map((response.results || []).map((x) => [x.product, x]));
     for (const item of pending) {
       const suggestion = byProduct.get(item.originalProductName);
-      const pair = suggestion && matchTaxonomyPair(current, suggestion.masterCategory, suggestion.productCategory || suggestion.category);
+      let pair = suggestion && matchTaxonomyPair(current, suggestion.masterCategory, suggestion.productCategory || suggestion.category);
+      if (!pair && suggestion && suggestion.productCategory !== 'NO_MATCH' && suggestion.category !== 'NO_MATCH' && taxonomyResolver) {
+        try { pair = await taxonomyResolver(suggestion); } catch { pair = null; }
+      }
       if (pair) Object.assign(item, { suggestedCategory: pair.name, suggestedProductCategory: pair.name, suggestedMasterCategory: pair.masterCategory, confidence: typeof suggestion.confidence === 'number' && Number.isFinite(suggestion.confidence) && suggestion.confidence >= 0 && suggestion.confidence <= 1 ? suggestion.confidence : null, suggestionReason: suggestion.reason || null, mappingSource: 'ai-suggested', suggestionStatus: 'AI Suggested', classificationRequired: true, manualReason: null });
       else if (suggestion?.productCategory === 'NO_MATCH' || suggestion?.category === 'NO_MATCH') reviewState(item, 'No Match', 'No suitable existing category was found. Please select master and product categories manually.');
       else reviewState(item, 'Failed', 'AI classification could not be completed. Retry or select categories manually.');
