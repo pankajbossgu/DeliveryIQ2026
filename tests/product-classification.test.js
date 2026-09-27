@@ -96,14 +96,14 @@ test('stale or deactivated suggestions are not reused and tenant taxonomy is iso
   assert.deepEqual(buildTaxonomy(inactive.productCategories, inactive.masterCategories).productCategories, []);
 });
 
-for (const count of [100, 500, 1000, 5000]) test(`${count} unique pending products use batches of 100 with concurrency one`, async () => {
+for (const count of [100, 101, 500, 1000, 5000]) test(`${count} unique pending products use batches of 25 with concurrency one`, async () => {
   let active = 0; let peak = 0; const batches = [];
   const provider = new GeminiProductClassifier({ apiKey: 'synthetic', fetchImpl: async (_url, options) => {
     active++; peak = Math.max(active, peak); const names = JSON.parse(JSON.parse(options.body).contents[0].parts[0].text).products; batches.push(names.length);
     await new Promise((resolve) => setImmediate(resolve)); active--; return response(names.map((x) => answer(x)));
   } });
   const result = await provider.classifyProducts(Array.from({ length: count }, (_, i) => `Product ${i}`), taxonomy);
-  assert.equal(batches.length, count / 100); assert.ok(batches.every((x) => x === 100)); assert.equal(peak, 1); assert.equal(result.results.length, count);
+  assert.deepEqual(batches, Array.from({ length: Math.ceil(count / 25) }, (_, i) => Math.min(25, count - i * 25))); assert.equal(peak, 1); assert.equal(result.results.length, count);
 });
 
 test('429 and 5xx retries are preserved; partial failures retain successful batches and progress', async () => {
@@ -115,8 +115,8 @@ test('429 and 5xx retries are preserved; partial failures retain successful batc
     return response(names.map((x) => answer(x)));
   } });
   const result = await provider.classifyProducts(Array.from({ length: 201 }, (_, i) => `P${i}`), taxonomy, { onProgress: async (value) => progress.push(value) });
-  assert.equal(calls, 5); assert.equal(result.results.length, 101); assert.equal(result.failedProducts.length, 100);
-  assert.deepEqual(progress.map((x) => x.completed), [0, 100, 200, 201]); assert.equal(progress.at(-1).failed, 100);
+  assert.equal(calls, 11); assert.equal(result.results.length, 176); assert.equal(result.failedProducts.length, 25);
+  assert.deepEqual(progress.map((x) => x.completed), [0, 25, 50, 75, 100, 125, 150, 175, 200, 201]); assert.equal(progress.at(-1).failed, 25);
 });
 
 test('response body is covered by the timeout and cancellation stops later batches', async () => {
