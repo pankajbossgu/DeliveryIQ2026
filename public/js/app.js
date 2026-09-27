@@ -453,7 +453,7 @@ async function saveMappingRow(kind, mapping, controls, row, save, errorText) {
 }
 function mappingCell(label, child, className) {
   const cell = el('td', undefined, className);
-  cell.dataset.label = label; cell.append(child); return cell;
+  cell.dataset.label = label; if (child) cell.append(child); return cell;
 }
 function updateMappingRowPresentation(row, mapping, kind) {
   row.querySelector('.mapping-badge-cell').replaceChildren(mappingBadge(mapping, kind));
@@ -468,14 +468,17 @@ function mappingRow(mapping, kind) {
   let controls;
   let updateDirty;
   if (kind === 'status') {
+    const categoryCell = mappingCell('Final Category', null, 'mapping-select-cell');
     const category = document.createElement('select');
     category.setAttribute('aria-label', `Final category for ${mapping.originalExample}`);
     state.config.statusCategories.forEach((value) => category.append(new Option(value, value)));
     category.value = mapping.category || '';
-    row.append(mappingCell('Final Category', category, 'mapping-select-cell'));
     controls = { category };
     updateDirty = () => { save.disabled = category.value === mapping.category; errorText.hidden = true; };
     category.addEventListener('change', updateDirty);
+    if (mapping.editable) categoryCell.append(category);
+    else categoryCell.append(el('span', mapping.category, 'mapping-readonly-category'));
+    row.append(categoryCell);
   } else {
     const master = document.createElement('select');
     master.setAttribute('aria-label', `Master category for ${mapping.originalExample}`);
@@ -491,7 +494,27 @@ function mappingRow(mapping, kind) {
   }
   row.append(mappingCell(kind === 'product' ? 'Source / Status' : 'Source', mappingBadge(mapping, kind), 'mapping-badge-cell'));
   row.append(mappingCell('Last Updated', el('time', mappingDate(mapping.updatedAt), 'mapping-date'), 'mapping-date-cell'));
-  const action = el('div', undefined, 'mapping-row-actions'); action.append(save, errorText);
+  const action = el('div', undefined, 'mapping-row-actions');
+  if (kind === 'status' && !mapping.editable) {
+    const override = el('button', 'Override category', 'button button-secondary mapping-save'); override.type = 'button';
+    override.addEventListener('click', () => { row.querySelector('.mapping-select-cell').replaceChildren(controls.category); mapping.editable = true; save.disabled = true; action.replaceChildren(save, errorText); });
+    action.append(override);
+  } else {
+    action.append(save);
+    if (kind === 'status') {
+      const remove = el('button', 'Delete override', 'button button-secondary mapping-delete'); remove.type = 'button';
+      remove.addEventListener('click', async () => {
+        remove.disabled = true;
+        try {
+          const response = await fetch(`/api/mappings/status/${encodeURIComponent(mapping.originalExample)}`, { method: 'DELETE' }); const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.success) throw new Error(payload.message || 'This override could not be deleted.');
+          mappingToast('Client override deleted. System default restored.'); await loadStatuses();
+        } catch (error) { mappingToast(error.message || 'This override could not be deleted.', true); remove.disabled = false; }
+      });
+      action.append(remove);
+    }
+    action.append(errorText);
+  }
   row.append(mappingCell('Actions', action, 'mapping-action-cell'));
   save.addEventListener('click', () => saveMappingRow(kind, mapping, controls, row, save, errorText));
   return row;

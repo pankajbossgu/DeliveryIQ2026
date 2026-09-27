@@ -13,7 +13,8 @@ function normalizeMappingValue(value) {
     .trim();
 }
 
-function normalizedSet(values) { return new Set(values.map(normalizeMappingValue)); }
+const systemExamples = new Map();
+function normalizedSet(values) { return new Set(values.map((value) => { const normalized = normalizeMappingValue(value); if (!systemExamples.has(normalized)) systemExamples.set(normalized, value); return normalized; })); }
 const rules = {
   rto: normalizedSet(['RTO', 'RTO Initiated', 'RTO Initiate', 'RTO Raised', 'RTO Requested', 'RTO Request', 'RTO Started', 'RTO Processing', 'RTO In Progress', 'RTO Pending', 'RTO Confirmed', 'Return to Origin', 'Returned to Origin', 'Returning to Origin', 'Return Initiated', 'Return Started', 'RTO In Transit', 'RTO IT', 'Return In Transit', 'Return to Origin In Transit', 'Returning to Origin In Transit', 'RTO OFD', 'RTO Out for Delivery', 'Return Out for Delivery', 'Return to Origin Out for Delivery', 'RTO Delivered', 'RTO Delivery', 'RTO Returned', 'RTO Completed', 'RTO Received', 'Returned to Seller', 'Returned to Warehouse', 'RTO NDR', 'RTO NDR Raised', 'RTO Delivery Failed', 'RTO Reattempt', 'RTO Acknowledged', 'RTO Rejected', 'RTO Disposed', 'Disposed', 'Disposed Of', 'Return Disposed', 'Reached RTO', 'Reached Origin', 'Reached at Origin', 'RAO', 'Return Received at Origin', 'Return Reached Origin']),
   ndr: normalizedSet(['NDR', 'NDR Raised', 'NDR Generated', 'NDR Created', 'NDR Initiated', 'NDR Pending', 'NDR Open', 'NDR Case', 'NDR Attempt', 'NDR Reason', 'Non Delivery', 'Non Delivery Report', 'Undelivered', 'Shipment Undelivered', 'Order Undelivered', 'Delivery Undelivered', 'Delivery Failed', 'Delivery Failure', 'Failed Delivery', 'Delivery Attempt Failed', 'Delivery Attempt Unsuccessful', 'Delivery Unsuccessful', 'Attempted Delivery', 'Delivery Attempted', 'Unable to Deliver', 'Could Not Deliver', 'Not Delivered', 'Customer Not Available', 'Customer Unavailable', 'Consignee Not Available', 'Consignee Unavailable', 'Recipient Not Available', 'Recipient Unavailable', 'Customer Unreachable', 'Recipient Unreachable', 'Consignee Unreachable', 'Phone Unreachable', 'Phone Switched Off', 'No Response', 'Not Reachable', 'Customer Refused', 'Customer Rejected', 'Consignee Refused', 'Consignee Rejected', 'Recipient Refused', 'Recipient Rejected', 'Refused To Accept', 'Refused Delivery', 'Address Issue', 'Address Incorrect', 'Incorrect Address', 'Wrong Address', 'Incomplete Address', 'Address Incomplete', 'Address Not Found', 'Wrong Pincode', 'Incorrect Pincode', 'Pincode Issue', 'PIN Code Issue', 'Door Locked', 'House Locked', 'Office Closed', 'Shop Closed', 'Premises Closed', 'COD Refused', 'COD Rejected', 'COD Payment Failed', 'Cash Not Available', 'Delivery Exception', 'Delivery Attempt Exception', 'Delivery Issue', 'Reattempt', 'Reattempt Requested', 'Delivery Reattempt', 'NDR Reattempt']),
@@ -41,4 +42,11 @@ function classifyProduct(originalProduct, clientMappings = [], genericMappings =
   return { originalProduct, normalizedProduct, category: category || null, mappingSource: category ? (mappingIndex(clientMappings).has(normalizedProduct) ? 'client' : 'generic') : 'unmapped', classificationRequired: !category };
 }
 function isReportCategory(category) { return REPORT_CATEGORIES.includes(category); }
-module.exports = { createStatusClassifier, REPORT_CATEGORIES, UNMAPPED, classifyProduct, classifyStatus, isReportCategory, normalizeMappingValue };
+function systemStatusMappings() {
+  const mappings = new Map();
+  for (const [rule, category] of [['rto', 'RTO'], ['ndr', 'NDR'], ['delivered', 'Delivered'], ['cancelled', 'Cancelled'], ['transit', 'In Transit'], ['other', 'Other']]) {
+    for (const normalizedValue of rules[rule]) mappings.set(normalizedValue, category);
+  }
+  return [...mappings].map(([normalizedValue, category]) => ({ normalizedValue, originalExample: systemExamples.get(normalizedValue), category, systemCategory: category, source: 'System Default', editable: false, updatedBy: 'system' }));
+}
+module.exports = { createStatusClassifier, REPORT_CATEGORIES, UNMAPPED, classifyProduct, classifyStatus, isReportCategory, normalizeMappingValue, systemStatusMappings };

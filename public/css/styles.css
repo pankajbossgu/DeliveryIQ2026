@@ -2628,6 +2628,8 @@ button:disabled {
 .mapping-table-status th:nth-child(4) { width: 15%; }
 .mapping-table-status th:nth-child(5) { width: 12%; }
 .mapping-row-name { display: block; color: #26344a; font-size: .8rem; overflow-wrap: anywhere; }
+.mapping-readonly-category { display: inline-flex; align-items: center; gap: 5px; color: #59677d; font-size: .74rem; font-weight: 700; }
+.mapping-readonly-category::before { content: '🔒'; font-size: .7rem; }
 .mapping-select-cell .premium-select { display: block; width: 100%; min-width: 0; }
 .mapping-select-cell .premium-select-trigger { min-height: 38px; padding-inline: 9px; background: #fff; font-size: .74rem; }
 .mapping-badge { display: inline-flex; max-width: 100%; align-items: center; padding: 5px 8px; border: 1px solid; border-radius: 999px; font-size: .68rem; font-weight: 800; line-height: 1.2; white-space: normal; }
