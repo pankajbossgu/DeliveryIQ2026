@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
 process.env.ADMIN_USERNAME = 'test-admin';
 process.env.ADMIN_PASSWORD = 'test-password';
 process.env.SESSION_SECRET = 'test-session-secret-that-is-long-enough';
@@ -15,6 +18,23 @@ async function authenticatedFetch(base, pathname, options = {}) {
   if (!cookie) { const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: process.env.ADMIN_USERNAME, password: process.env.ADMIN_PASSWORD }) }); assert.equal(login.status, 200); cookie = login.headers.get('set-cookie').split(';', 1)[0]; testSessions.set(base, cookie); }
   return fetch(`${base}${pathname}`, { ...options, headers: { ...options.headers, cookie } });
 }
+
+test('upload workflow checkpoint follows the processing stage machine', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const start = source.indexOf('function processingStageIndex');
+  const end = source.indexOf('function fileSize', start);
+  const context = vm.createContext({ PROCESSING_STAGES: [['preparing_data'], ['checking_status_mappings'], ['mapping_statuses'], ['checking_products'], ['ai_product_classification'], ['preparing_review'], ['finalizing_report']], unresolvedCount: (process) => [...(process.classifications?.statuses || []), ...(process.classifications?.products || [])].filter((item) => item.classificationRequired).length });
+  vm.runInContext(`${source.slice(start, end)}; globalThis.workflowStateForProcess = workflowStateForProcess; globalThis.processingStageIndex = processingStageIndex;`, context);
+  const checkpoint = (stage, status = 'processing', classifications = {}) => JSON.parse(JSON.stringify(context.workflowStateForProcess({ stage, status, classifications })));
+  for (const stage of ['preparing_data', 'checking_status_mappings', 'mapping_statuses', 'checking_products']) assert.deepEqual(checkpoint(stage), { active: 1, completed: [0] });
+  assert.deepEqual(checkpoint('ai_product_classification'), { active: 2, completed: [0, 1] });
+  assert.deepEqual(checkpoint('preparing_review'), { active: 2, completed: [0, 1] });
+  assert.deepEqual(checkpoint('preparing_review', 'review_required', { products: [{ classificationRequired: false }], statuses: [] }), { active: 3, completed: [0, 1, 2] });
+  assert.deepEqual(checkpoint('finalizing_report', 'finalizing'), { active: 4, completed: [0, 1, 2, 3] });
+  assert.deepEqual(checkpoint('completed', 'completed'), { active: 4, completed: [0, 1, 2, 3] });
+  assert.equal(context.processingStageIndex('finalizing_report'), 6);
+});
+
 test('admin authentication protects application pages and private APIs, then creates and clears a secure session', async () => {
   const app = require('../src/app'); const server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)); }); const base = `http://127.0.0.1:${server.address().port}`;
   try {

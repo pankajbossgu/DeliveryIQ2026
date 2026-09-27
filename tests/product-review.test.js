@@ -62,7 +62,7 @@ function browser(process) {
   const context = vm.createContext({ state, Date, Set, Map, Boolean, encodeURIComponent,
     el: (tag, text) => new Element(tag, text), document: { createElement: (tag) => new Element(tag) }, Option: function (text) { return new Element('option', text); },
     $: (selector) => { if (!nodes.has(selector)) nodes.set(selector, new Element('div')); return nodes.get(selector); },
-    clear: (node) => { node.children = []; }, clearNotice() {}, setWorkflowStep() {}, taxonomyOptions: () => new Element('select'), replacePremiumSelect: (_old, next) => next,
+    clear: (node) => { node.children = []; }, clearNotice() {}, setWorkflowStep() {}, setWorkflowForProcess() {}, taxonomyOptions: () => new Element('select'), replacePremiumSelect: (_old, next) => next,
     bulkProductMapping() {}, bulkProductAction() {}, clearProductSelection() { state.selectedProducts.clear(); },
     reviewItem: (item) => new Element('article', item.value), generateReport() {},
     applyProcess: (next) => { state.result = next; }, reviewFeedback: (text) => { notifications.push(text); }, scheduleProductRetryPoll() {},
