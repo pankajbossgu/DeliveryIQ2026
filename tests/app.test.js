@@ -268,6 +268,10 @@ test('Universal Report frontend uses the grouped business report without legacy 
   for (const insight of ['Top Performers', 'Needs Attention', 'RTO Risk', 'NDR Risk', 'High Volume', 'Best Categories', 'Best Couriers']) assert.match(html, new RegExp(insight));
   assert.doesNotMatch(html, /Search order ID|Latest status|Category Status|name="categoryStatus"/);
   assert.match(script, /\/api\/universal\/grouped/); assert.match(script, /data-delivery-view/); assert.match(script, /\['Delivery %', 'deliveryPercentage'\]/); assert.match(script, /const universalView = \{ mode: 'overview', quickInsight: 'top-performers' \}/); assert.match(script, /data-quick-insight/); assert.match(script, /quickInsight: universalView\.quickInsight/); assert.match(script, /Threshold: 10\+ distinct orders/); assert.match(script, /most distinct \$\{orderTotalLabel\.toLowerCase\(\)\}/); assert.match(script, /insight-rank-metric/); assert.match(script, /universal-insight-cards/); assert.doesNotMatch(script, /form\.elements\.search/);
+  assert.doesNotMatch(html, /id="universal-result-summary">Loading report/);
+  assert.match(script, /state\.universal\.loading = true/);
+  assert.match(script, /if \(state\.universal\.controller === controller\) state\.universal\.loading = false/);
+  assert.ok(script.indexOf("const universalView = { mode: 'overview', quickInsight: 'top-performers' }") < script.indexOf("document.body.classList.add('upload-restoring'); page(pageFromLocation())"));
 });
 
 
