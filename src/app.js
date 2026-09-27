@@ -1,5 +1,6 @@
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { performance } = require('node:perf_hooks');
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -35,6 +36,7 @@ const mappingKind = (value) => ['status', 'product'].includes(value) ? value : n
 const UNIVERSAL_STATUS_CATEGORIES = new Set(REPORT_CATEGORIES);
 const UNIVERSAL_SORT_FIELDS = new Set(['latestReportCompletedAt', 'orderDate', 'createdAt', 'totalValue', 'totalQuantity', 'canonicalOrderId']);
 const universalClientId = () => app.locals.clientId;
+function recordDuration(timings, name, startedAt) { if (timings) { const stages = timings.stages || (timings.stages = {}); stages[name] = (stages[name] || 0) + performance.now() - startedAt; } }
 function invalidUniversal(response, message) { return response.status(422).json({ success: false, code: 'INVALID_UNIVERSAL_QUERY', message }); }
 function singleQuery(value) { return typeof value === 'string' ? value : value === undefined ? undefined : null; }
 function universalPagination(query) { const pageValue = singleQuery(query.page); const limitValue = singleQuery(query.limit); if (pageValue === null || limitValue === null || pageValue !== undefined && !/^[1-9]\d*$/.test(pageValue) || limitValue !== undefined && !/^[1-9]\d*$/.test(limitValue)) return { error: 'Page and limit must be positive integers.' }; const page = Number(pageValue || 1); const limit = Number(limitValue || 25); if (limit > 100) return { error: 'Limit cannot exceed 100.' }; return { page, limit }; }
@@ -84,20 +86,72 @@ app.get('/api/uploads/template.csv', (request, response) => response.attachment(
 app.get('/api/uploads/template.xlsx', (request, response) => response.attachment('deliveryiq-full-report-template.xlsx').type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(xlsxTemplate('full')));
 app.get('/api/classifications/config', async (request, response) => { const { masters, categories } = await mappingStore.taxonomySnapshot(clientId); return response.json({ statusCategories: REPORT_CATEGORIES, masterCategories: masters.filter((item) => item.active), productCategories: categories.filter((item) => item.active) }); });
 function activeProcessUploadMessage(job) { return job?.status === 'review_required' ? 'Your current report needs category review before you can upload another file.' : 'Your current report needs to be completed before you can upload another file.'; }
-app.post('/api/uploads/validate', express.raw({ type: 'application/octet-stream', limit: MAX_FILE_SIZE }), async (request, response) => { const name = request.get('x-file-name'); if (!name) return response.status(400).json({ success: false, code: 'FILE_REQUIRED', message: 'Choose a CSV or XLSX file to validate.', details: {} }); const active = await processingStore.getActiveProcess(clientId, { includeRows: false }); if (active) return response.status(409).json({ success: false, code: 'ACTIVE_REPORT_PROCESS', message: activeProcessUploadMessage(active), process: processingStore.public(active) }); const result = validateUpload({ originalname: name, buffer: request.body }, { classify: false, templateType: request.get('x-template-type') || 'auto' }); if (!result.success) return response.status(result.status).json(result); const created = await processingStore.createValidated(clientId, result, request.get('x-report-request-id')); const job = created.job; if (created.existing) return response.status(409).json({ success: false, code: 'ACTIVE_REPORT_PROCESS', message: activeProcessUploadMessage(job), process: processingStore.public(job) }); console.info(JSON.stringify({ event: 'report_process_validated', processId: job.processId, productRows: result.summary.productRows, uniqueProducts: result.summary.detectedProducts })); const { normalizedRows, ...safe } = result; return response.json({ ...safe, process: processingStore.public(job) }); });
-function finalRowsFromProcess(job) {
+app.post('/api/uploads/validate', express.raw({ type: 'application/octet-stream', limit: MAX_FILE_SIZE }), async (request, response) => {
+  const name = request.get('x-file-name');
+  if (!name) return response.status(400).json({ success: false, code: 'FILE_REQUIRED', message: 'Choose a CSV or XLSX file to validate.', details: {} });
+  const active = await processingStore.getActiveProcess(clientId, { includeRows: false });
+  if (active) return response.status(409).json({ success: false, code: 'ACTIVE_REPORT_PROCESS', message: activeProcessUploadMessage(active), process: processingStore.public(active) });
+  const performanceTimings = { startedAtEpochMs: performance.timeOrigin + performance.now(), stages: {} };
+  const result = validateUpload({ originalname: name, buffer: request.body }, { classify: false, templateType: request.get('x-template-type') || 'auto', performanceTimings });
+  if (!result.success) return response.status(result.status).json(result);
+  const created = await processingStore.createValidated(clientId, { ...result, __performance: performanceTimings }, request.get('x-report-request-id'));
+  const job = created.job;
+  if (created.existing) return response.status(409).json({ success: false, code: 'ACTIVE_REPORT_PROCESS', message: activeProcessUploadMessage(job), process: processingStore.public(job) });
+  console.info(JSON.stringify({ event: 'report_process_validated', processId: job.processId, productRows: result.summary.productRows, uniqueProducts: result.summary.detectedProducts }));
+  const { normalizedRows, ...safe } = result;
+  return response.json({ ...safe, process: processingStore.public(job) });
+});
+function finalRowsFromProcess(job, performanceTimings = job.result?.__performance || job.input?.__performance) {
   const classifications = job.result?.classifications; if (!classifications) return null;
   const unresolved = [...classifications.statuses, ...classifications.products].some((item) => item.classificationRequired);
   if (unresolved) return null;
+  const startedAt = performance.now();
   const products = new Map(classifications.products.map((item) => [item.normalizedProductName, item]));
   const statuses = new Map(classifications.statuses.map((item) => [item.value, item]));
-  return job.input.normalizedRows.map((source) => { const product = products.get(normalizeProductName(source.originalProductName)); const status = statuses.get(source.originalStatus); return { ...source, category: status?.category, normalizedStatus: status?.normalizedStatus, masterCategory: product?.masterCategory, productCategory: product?.productCategory || product?.category, productMappingSource: product?.mappingSource, productClassificationRequired: false }; });
+  const rows = job.input.normalizedRows.map((source) => { const product = products.get(normalizeProductName(source.originalProductName)); const status = statuses.get(source.originalStatus); return { ...source, category: status?.category, normalizedStatus: status?.normalizedStatus, masterCategory: product?.masterCategory, productCategory: product?.productCategory || product?.category, productMappingSource: product?.mappingSource, productClassificationRequired: false }; });
+  recordDuration(performanceTimings, 'reportRowGenerationMs', startedAt);
+  return rows;
 }
-async function classifyProcess(job, stage, cancelled = async () => false) { console.info(JSON.stringify({ event: 'report_process_classification_started', processId: job.processId })); if (!await stage('checking_status_mappings') || await cancelled()) return { cancelled: true }; const { statusMappings, productMappings, masterCategories, productCategories, suggestions } = await mappingStore.classificationContext(job.clientId, job.input.normalizedRows); if (!await stage('mapping_statuses') || await cancelled()) return { cancelled: true }; if (await cancelled() || !await stage('checking_products') || !await stage('ai_product_classification')) return { cancelled: true }; const result = await processValidatedUpload(job.input, { statusMappings, productMappings, masterCategories, productCategories, suggestions, productClassifier: { classifyProducts: (products, taxonomy) => productClassifier.classifyProducts(products, taxonomy, { isCancelled: cancelled, onProgress: (productClassificationProgress) => processingStore.publish(job, { productClassificationProgress }) }) }, taxonomyResolver: (suggestion) => mappingStore.resolveGeminiTaxonomy(job.clientId, suggestion), includeRows: false }); if (await cancelled()) return { cancelled: true }; const products = result.classifications.products; await mappingStore.saveSuggestions(clientId, products); if (await cancelled()) return { cancelled: true }; const unresolved = result.classifications.statuses.some((item) => item.classificationRequired) || products.some((item) => item.classificationRequired); if (unresolved) return result; if (!await stage('finalizing_report') || await cancelled()) return { cancelled: true }; return { result, report: await reportStore.create(clientId, { templateType: result.templateType, sourceFileName: result.file.name, rows: finalRowsFromProcess({ ...job, result }), requestId: job.requestId }) }; }
+async function classifyProcess(job, stage, cancelled = async () => false) {
+  const performanceTimings = job.input.__performance || { startedAtEpochMs: performance.timeOrigin + performance.now(), stages: {} };
+  console.info(JSON.stringify({ event: 'report_process_classification_started', processId: job.processId }));
+  if (!await stage('checking_status_mappings') || await cancelled()) return { cancelled: true };
+  const mappingContextStartedAt = performance.now();
+  const { statusMappings, productMappings, masterCategories, productCategories, suggestions } = await mappingStore.classificationContext(job.clientId, job.input.normalizedRows);
+  recordDuration(performanceTimings, 'mappingContextMs', mappingContextStartedAt);
+  if (!await stage('mapping_statuses') || await cancelled()) return { cancelled: true };
+  if (await cancelled() || !await stage('checking_products') || !await stage('ai_product_classification')) return { cancelled: true };
+  const result = await processValidatedUpload(job.input, { statusMappings, productMappings, masterCategories, productCategories, suggestions, performanceTimings, productClassifier: { classifyProducts: (products, taxonomy) => productClassifier.classifyProducts(products, taxonomy, { isCancelled: cancelled, onProgress: (productClassificationProgress) => processingStore.publish(job, { productClassificationProgress }) }) }, taxonomyResolver: (suggestion) => mappingStore.resolveGeminiTaxonomy(job.clientId, suggestion), includeRows: false });
+  result.__performance = performanceTimings;
+  if (await cancelled()) return { cancelled: true };
+  const products = result.classifications.products;
+  await mappingStore.saveSuggestions(clientId, products);
+  if (await cancelled()) return { cancelled: true };
+  const unresolved = result.classifications.statuses.some((item) => item.classificationRequired) || products.some((item) => item.classificationRequired);
+  if (unresolved) return result;
+  if (!await stage('finalizing_report') || await cancelled()) return { cancelled: true };
+  const rows = finalRowsFromProcess({ ...job, result }, performanceTimings);
+  const report = await reportStore.create(clientId, { templateType: result.templateType, sourceFileName: result.file.name, rows, requestId: job.requestId }, performanceTimings);
+  return { result, report };
+}
 app.get('/api/report-processes/active', async (request, response) => { const job = await processingStore.getActiveProcess(clientId, { includeRows: false }); return response.json({ success: true, process: processingStore.public(job) }); });
 app.get('/api/report-processes/:processId', async (request, response) => { const job = await processingStore.get(clientId, request.params.processId, { includeRows: false }); return job ? response.json({ success: true, process: processingStore.public(job) }) : response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be found.' }); });
 app.post('/api/report-processes/:processId/start', async (request, response) => { console.info(JSON.stringify({ event: 'report_process_start_requested', processId: request.params.processId })); const job = await processingStore.get(clientId, request.params.processId, { includeRows: false }); if (!job) return response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be found.' }); if (['queued', 'failed'].includes(job.status)) { job.status = 'processing'; job.stage = 'preparing_data'; job.error = null; const claimed = await processingStore.save(job, { metadataOnly: true }); if (claimed !== job) return response.status(202).json({ success: true, process: processingStore.public(claimed) }); processingStore.start(clientId, job.processId, classifyProcess, { alreadyStarted: true }).catch((error) => console.warn(JSON.stringify({ event: 'report_process_start_failed', processId: job.processId, message: error?.message || 'unknown' }))); } return response.status(202).json({ success: true, process: processingStore.public(job) }); });
-app.post('/api/report-processes/:processId/finalize', async (request, response) => { const job = await processingStore.get(clientId, request.params.processId); if (!job) return response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be found.' }); if (job.status === 'completed') return response.json({ success: true, report: job.report, process: processingStore.public(job) }); if (job.status !== 'review_required' && job.status !== 'finalizing') return response.status(409).json({ success: false, code: 'PROCESS_NOT_READY', message: 'Finish processing before finalizing this report.' }); const rows = finalRowsFromProcess(job); if (!rows) return response.status(422).json({ success: false, code: 'CLASSIFICATION_REQUIRED', message: 'Some statuses or products still need classification before generating the report.', process: processingStore.public(job) }); job.status = 'finalizing'; job.stage = 'finalizing_report'; await processingStore.save(job, { metadataOnly: true }); const report = await reportStore.create(clientId, { templateType: job.input.templateType, sourceFileName: job.input.file.name, rows, requestId: job.requestId }); const completed = await processingStore.complete(job, report); if (completed?.status === 'cancelled') return response.status(409).json({ success: false, code: 'PROCESS_CANCELLED', message: 'This report process was cancelled before completion.', process: processingStore.public(completed) }); return response.status(201).json({ success: true, report, process: processingStore.public(completed) }); });
+app.post('/api/report-processes/:processId/finalize', async (request, response) => {
+  const job = await processingStore.get(clientId, request.params.processId);
+  if (!job) return response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be found.' });
+  if (job.status === 'completed') return response.json({ success: true, report: job.report, process: processingStore.public(job) });
+  if (job.status !== 'review_required' && job.status !== 'finalizing') return response.status(409).json({ success: false, code: 'PROCESS_NOT_READY', message: 'Finish processing before finalizing this report.' });
+  const performanceTimings = job.result?.__performance || job.input.__performance || { startedAtEpochMs: performance.timeOrigin + performance.now(), stages: {} };
+  const rows = finalRowsFromProcess(job, performanceTimings);
+  if (!rows) return response.status(422).json({ success: false, code: 'CLASSIFICATION_REQUIRED', message: 'Some statuses or products still need classification before generating the report.', process: processingStore.public(job) });
+  job.status = 'finalizing'; job.stage = 'finalizing_report';
+  await processingStore.save(job, { metadataOnly: true });
+  const report = await reportStore.create(clientId, { templateType: job.input.templateType, sourceFileName: job.input.file.name, rows, requestId: job.requestId }, performanceTimings);
+  const completed = await processingStore.complete(job, report);
+  if (completed?.status === 'cancelled') return response.status(409).json({ success: false, code: 'PROCESS_CANCELLED', message: 'This report process was cancelled before completion.', process: processingStore.public(completed) });
+  return response.status(201).json({ success: true, report, process: processingStore.public(completed) });
+});
 app.get('/api/mappings/:kind', async (request, response) => { const kind = mappingKind(request.params.kind); if (!kind) return response.status(404).json({ error: 'Not found' }); return response.json({ success: true, mappings: kind === 'status' ? await mappingStore.listStatusMappings(clientId) : await mappingStore.list(kind, clientId) }); });
 async function applyReviewDecision(job, kind, value, body) {
   let update;

@@ -1,8 +1,10 @@
 const mongoose = require('mongoose');
 const crypto = require('node:crypto');
+const { performance } = require('node:perf_hooks');
 const { MAX_SOURCE_ROWS, normalizeOrderId, normalizePaymentMode } = require('./upload');
 const CATEGORIES = ['Delivered', 'In Transit', 'NDR', 'RTO', 'Cancelled', 'Other'];
 const UNIVERSAL_SYNC_BATCH_SIZE = 2000;
+function recordDuration(timings, name, startedAt) { if (timings) { const stages = timings.stages || (timings.stages = {}); stages[name] = (stages[name] || 0) + performance.now() - startedAt; } }
 const rowSchema = new mongoose.Schema({ reportId: { type: String, index: true }, clientId: { type: String, index: true }, orderId: String, normalizedOrderId: String, orderDate: String, category: String, originalStatus: String, normalizedStatus: String, originalProductName: String, normalizedProductName: String, masterCategory: String, productCategory: String, paymentMode: String, courier: String, orderSource: String, quantity: Number, productPrice: Number, rowValue: Number }, { versionKey: false });
 rowSchema.index({ clientId: 1, reportId: 1, orderDate: 1 });
 const reportSchema = new mongoose.Schema({ reportId: { type: String, unique: true }, clientId: { type: String, index: true }, requestId: { type: String }, reportName: String, templateType: String, sourceFileName: String, sourceRowCount: Number, uniqueOrderCount: Number, reportStatus: String, createdAt: Date, completedAt: Date, summary: Object, dateRange: Object, availableDimensions: [String], analytics: Object, analyticsRef: mongoose.Schema.Types.Mixed }, { versionKey: false });
@@ -260,11 +262,11 @@ class UniversalStore {
     const failed = { ...(prior || {}), clientId, reportId, status: 'failed', error, counts: prior?.counts || { ordersProcessed: 0, occurrencesCreated: 0, ordersInserted: 0, ordersUpdated: 0, skippedDuplicateObservations: 0 } };
     this.syncs.set(key, failed); return failed;
   }
-  async syncCompletedReport(clientId, report, rows) {
+  async syncCompletedReport(clientId, report, rows, performanceTimings) {
     if (!report || report.clientId !== clientId || report.reportStatus !== 'completed' || !report.completedAt) return { status: 'skipped' };
     console.info(JSON.stringify({ event: 'universal_sync_started', clientId, reportId: report.reportId, sourceRows: rows.length }));
     const syncKey = this.key(clientId, report.reportId); const emptyCounts = { ordersProcessed: 0, occurrencesCreated: 0, ordersInserted: 0, ordersUpdated: 0, skippedDuplicateObservations: 0 };
-    if (await this.database()) return this.syncMongo(clientId, report, rows, emptyCounts);
+    if (await this.database()) return this.syncMongo(clientId, report, rows, emptyCounts, performanceTimings);
     const prior = this.syncs.get(syncKey); if (prior?.status === 'completed') return { ...prior, alreadyCompleted: true };
     const sync = { clientId, reportId: report.reportId, status: 'processing', startedAt: new Date(), completedAt: null, error: null, counts: { ...emptyCounts } }; this.syncs.set(syncKey, sync);
     try { const groups = groupUniversalRows(rows); sync.counts.ordersProcessed = groups.size;
@@ -274,7 +276,7 @@ class UniversalStore {
       } sync.status = 'completed'; sync.completedAt = new Date(); console.info(JSON.stringify({ event: 'universal_sync_completed', clientId, reportId: report.reportId, counts: sync.counts })); return sync;
     } catch (error) { console.warn(JSON.stringify({ event: 'universal_sync_failed', clientId, reportId: report.reportId, message: error?.message || 'unknown' })); return this.markFailed(clientId, report.reportId); }
   }
-  async syncMongo(clientId, report, rows, emptyCounts) {
+  async syncMongo(clientId, report, rows, emptyCounts, performanceTimings) {
     const existing = await UniversalSync.findOne({ clientId, reportId: report.reportId }).lean(); if (existing?.status === 'completed') return { ...existing, alreadyCompleted: true };
     await UniversalSync.updateOne({ clientId, reportId: report.reportId }, { $set: { status: 'processing', startedAt: new Date(), completedAt: null, error: null }, $setOnInsert: { clientId, reportId: report.reportId, counts: emptyCounts } }, { upsert: true });
     try { const groups = groupUniversalRows(rows); const projections = [...groups.entries()].map(([id, orderRows]) => universalProjection(report, id, orderRows));
@@ -290,10 +292,16 @@ class UniversalStore {
       let occurrencesCreated = 0; let ordersInserted = 0; let ordersUpdated = 0;
       for (let offset = 0; offset < projections.length; offset += UNIVERSAL_SYNC_BATCH_SIZE) {
         const batch = projections.slice(offset, offset + UNIVERSAL_SYNC_BATCH_SIZE);
+        let bulkWriteStartedAt = performance.now();
         const occurrenceResult = await UniversalOrderOccurrence.bulkWrite(batch.map((projection) => ({ updateOne: { filter: { clientId, reportId: report.reportId, canonicalOrderId: projection.canonicalOrderId }, update: { $setOnInsert: { ...projection, reportId: report.reportId, reportCompletedAt: report.completedAt, sourceFileName: report.sourceFileName, templateType: report.templateType } }, upsert: true } })), { ordered: false });
+        recordDuration(performanceTimings, 'mongoOccurrenceBulkWriteMs', bulkWriteStartedAt);
+        bulkWriteStartedAt = performance.now();
         const insertResult = await UniversalOrder.bulkWrite(batch.map((projection) => ({ updateOne: { filter: { clientId, canonicalOrderId: projection.canonicalOrderId }, update: { $setOnInsert: projection }, upsert: true } })), { ordered: false });
+        recordDuration(performanceTimings, 'mongoOrderInsertBulkWriteMs', bulkWriteStartedAt);
         // Completion time, then report ID, remain the sole projection ordering keys.
+        bulkWriteStartedAt = performance.now();
         const updateResult = await UniversalOrder.bulkWrite(batch.map((projection) => ({ updateOne: { filter: { clientId, canonicalOrderId: projection.canonicalOrderId, $or: [{ latestReportCompletedAt: { $lt: report.completedAt } }, { latestReportCompletedAt: report.completedAt, latestReportId: { $lt: report.reportId } }] }, update: { $set: projection, ...(!projection.productsRef ? { $unset: { productsRef: 1 } } : {}) } } })), { ordered: false });
+        recordDuration(performanceTimings, 'mongoOrderUpdateBulkWriteMs', bulkWriteStartedAt);
         occurrencesCreated += occurrenceResult.upsertedCount || 0; ordersInserted += insertResult.upsertedCount || 0; ordersUpdated += updateResult.modifiedCount || 0;
       }
       const counts = { ordersProcessed: projections.length, occurrencesCreated, ordersInserted, ordersUpdated, skippedDuplicateObservations: projections.length - occurrencesCreated };
@@ -307,7 +315,7 @@ function persistedReportRows(clientId, reportId, rows) {
 }
 class ReportStore {
   constructor({ mongoUri = process.env.MONGODB_URI, universalStore } = {}) { this.mongoUri = mongoUri; this.connection = null; this.memory = new Map(); this.rows = new Map(); this.universalStore = universalStore || new UniversalStore({ mongoUri }); this.payloads = new PayloadStore(() => this.database()); }
-  async synchronizeUniversal(clientId, report, rows) { try { return await this.universalStore.syncCompletedReport(clientId, report, rows); } catch (error) { console.warn(JSON.stringify({ event: 'universal_sync_failed', clientId, reportId: report.reportId, message: error?.message || 'unknown' })); if (typeof this.universalStore.markFailed === 'function') { try { return await this.universalStore.markFailed(clientId, report.reportId); } catch { /* The completed report remains authoritative if storage is unavailable. */ } } return { status: 'failed' }; } }
+  async synchronizeUniversal(clientId, report, rows, performanceTimings) { try { return await this.universalStore.syncCompletedReport(clientId, report, rows, performanceTimings); } catch (error) { console.warn(JSON.stringify({ event: 'universal_sync_failed', clientId, reportId: report.reportId, message: error?.message || 'unknown' })); if (typeof this.universalStore.markFailed === 'function') { try { return await this.universalStore.markFailed(clientId, report.reportId); } catch { /* The completed report remains authoritative if storage is unavailable. */ } } return { status: 'failed' }; } }
   async database() { if (!this.mongoUri || this.mongoUri.includes('127.0.0.1:27017/deliveryiq2026') && process.env.NODE_ENV === 'test') return null; if (!this.connection) this.connection = mongoose.connect(this.mongoUri, { serverSelectionTimeoutMS: 1500 }).catch(() => null); return this.connection; }
   async retryUniversal(clientId, reportId) {
     const database = await this.database(); const report = database ? await Report.findOne({ clientId, reportId, reportStatus: 'completed' }).lean() : this.memory.get(reportId);
@@ -316,12 +324,13 @@ class ReportStore {
     console.info(JSON.stringify({ event: 'universal_sync_retry_started', clientId, reportId, orders: groupUniversalRows(rows).size }));
     return this.synchronizeUniversal(clientId, report, rows);
   }
-  async create(clientId, input) {
+  async create(clientId, input, performanceTimings = input.rows.__performance) {
     const database = await this.database();
     if (input.requestId) {
       const existing = database ? await Report.findOne({ clientId, requestId: input.requestId }).lean() : [...this.memory.values()].find((item) => item.clientId === clientId && item.requestId === input.requestId);
       if (existing) return existing;
     }
+    const reportRowsStartedAt = performance.now();
     const reportId = crypto.randomUUID(); const calculated = aggregate(input.rows, input.templateType);
     let firstDate = null; let lastDate = null;
     for (const row of input.rows) { const date = row.orderDate || row.order_date; if (date && (!firstDate || date < firstDate)) firstDate = date; if (date && (!lastDate || date > lastDate)) lastDate = date; }
@@ -347,7 +356,18 @@ class ReportStore {
       }
       throw error;
     }
-    console.info(JSON.stringify({ event: 'report_completed', clientId, reportId, orders: calculated.totalOrders })); await this.synchronizeUniversal(clientId, report, persistedRows); return report;
+    recordDuration(performanceTimings, 'reportRowGenerationMs', reportRowsStartedAt);
+    console.info(JSON.stringify({ event: 'report_completed', clientId, reportId, orders: calculated.totalOrders }));
+    const universalSyncStartedAt = performance.now();
+    await this.synchronizeUniversal(clientId, report, persistedRows, performanceTimings);
+    recordDuration(performanceTimings, 'universalSyncMs', universalSyncStartedAt);
+    if (performanceTimings) {
+      const stages = performanceTimings.stages || {};
+      stages.mongoBulkWriteMs = (stages.mongoOccurrenceBulkWriteMs || 0) + (stages.mongoOrderInsertBulkWriteMs || 0) + (stages.mongoOrderUpdateBulkWriteMs || 0);
+      const totalReportGenerationMs = performanceTimings.startedAtEpochMs ? performance.timeOrigin + performance.now() - performanceTimings.startedAtEpochMs : null;
+      console.info(JSON.stringify({ event: 'report_generation_performance', clientId, reportId, orders: calculated.totalOrders, timingsMs: { fileParsingExtraction: stages.fileParsingExtractionMs || 0, rowNormalization: stages.rowNormalizationMs || 0, productExtractionClassification: stages.productExtractionClassificationMs || 0, statusMapping: stages.statusMappingMs || 0, reportRowGeneration: stages.reportRowGenerationMs || 0, universalReportSync: stages.universalSyncMs || 0, mongoBulkWrites: stages.mongoBulkWriteMs, mongoOccurrenceBulkWrites: stages.mongoOccurrenceBulkWriteMs || 0, mongoOrderInsertBulkWrites: stages.mongoOrderInsertBulkWriteMs || 0, mongoOrderUpdateBulkWrites: stages.mongoOrderUpdateBulkWriteMs || 0, totalReportGeneration: totalReportGenerationMs } }));
+    }
+    return report;
   }
   async list(clientId) { if (await this.database()) return Report.find({ clientId, reportStatus: 'completed' }).sort({ createdAt: -1 }).lean(); return [...this.memory.values()].filter((report) => report.clientId === clientId && report.reportStatus === 'completed').sort((a, b) => b.createdAt - a.createdAt); }
   async detail(clientId, reportId, filters = {}) { const report = await (await this.database() ? Report.findOne({ clientId, reportId }).lean() : this.memory.get(reportId)); if (!report || report.clientId !== clientId) return null; const analytics = report.analyticsRef ? await this.payloads.read(clientId, reportId, report.analyticsRef) : report.analytics; const allRows = await (await this.database() ? ReportRow.find({ clientId, reportId }).lean() : this.rows.get(reportId) || []); const rows = applyFilters(allRows, filters, report.templateType); return { ...report, analytics, filtered: aggregate(rows, report.templateType), filters: { availableDimensions: report.availableDimensions }, exportRows: rows }; }
