@@ -214,6 +214,10 @@ test('universal read APIs paginate, validate, sort, and remain scoped to the ser
     response = await authenticatedFetch(base, `/api/universal/summary`); body = await response.json(); assert.deepEqual(body.summary, { totalOrders: 2, totalValue: 30, totalQuantity: 3, byStatusCategory: { Delivered: 2 }, byStatus: { Delivered: 2 } });
     response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=product&paymentMode=COD&clientId=other-client`); body = await response.json(); assert.equal(body.report.groupLabel, 'Product'); assert.equal(body.report.totals.totalOrders, 2); assert.equal(body.report.rows.reduce((total, row) => total + row.delivered, 0), 2); assert.deepEqual(body.report.paymentModes, ['COD']);
     response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=paymentMode`); assert.equal(response.status, 422);
+    response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=courier&quickInsight=top-performers`); body = await response.json(); assert.equal(response.status, 200); assert.equal(body.report.groupLabel, 'Courier'); assert.deepEqual(body.report.insight, { key: 'top-performers', rows: [] });
+    for (const insight of ['rto-risk', 'ndr-risk']) { response = await authenticatedFetch(base, `/api/universal/grouped?quickInsight=${insight}`); body = await response.json(); assert.equal(response.status, 200); assert.equal(body.report.insight.key, insight); assert.deepEqual(body.report.insight.rows, []); }
+    for (const insight of ['best-categories', 'best-couriers']) { response = await authenticatedFetch(base, `/api/universal/grouped?quickInsight=${insight}`); body = await response.json(); assert.equal(response.status, 200); assert.equal(body.report.insight.key, insight); assert.deepEqual(body.report.insight.rows, []); }
+    response = await authenticatedFetch(base, `/api/universal/grouped?quickInsight=unknown`); assert.equal(response.status, 422);
     response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=product&deliveryView=invalid`); assert.equal(response.status, 422);
     response = await authenticatedFetch(base, `/api/universal/grouped?analyzeBy=product`); body = await response.json(); assert.equal(body.report.deliveryView, 'all_orders');
     response = await authenticatedFetch(base, `/api/universal/summary?search=ORD-2&clientId=other-client`); body = await response.json(); assert.equal(body.summary.totalOrders, 1); assert.equal(body.summary.totalQuantity, 1);
@@ -258,8 +262,12 @@ test('Universal Report frontend uses the grouped business report without legacy 
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
   assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /REPORT BASIS/); assert.match(html, /All Orders/); assert.match(html, /Shipped Orders/); assert.match(html, /name="deliveryView" value="all_orders"/); assert.match(html, /data-payment="COD"/); assert.match(html, /Last 30 Days/); assert.match(html, /Summary Report/);
+  assert.match(html, /data-universal-mode="overview" aria-pressed="false">Overview/); assert.match(html, /data-universal-mode="insights" class="is-active" aria-pressed="true"/);
+  assert.match(html, /id="universal-insight-results"/); assert.match(html, /data-quick-insight="rto-risk" aria-pressed="false">/); assert.match(html, /data-quick-insight="ndr-risk" aria-pressed="false">/); assert.match(html, /data-quick-insight="best-categories" aria-pressed="false">/); assert.match(html, /data-quick-insight="best-couriers" aria-pressed="false">/);
+  assert.match(html, /id="universal-insight-description"/);
+  for (const insight of ['Top Performers', 'Needs Attention', 'RTO Risk', 'NDR Risk', 'High Volume', 'Best Categories', 'Best Couriers']) assert.match(html, new RegExp(insight));
   assert.doesNotMatch(html, /Search order ID|Latest status|Category Status|name="categoryStatus"/);
-  assert.match(script, /\/api\/universal\/grouped/); assert.match(script, /data-delivery-view/); assert.match(script, /\['Delivery %', 'deliveryPercentage'\]/); assert.doesNotMatch(script, /form\.elements\.search/);
+  assert.match(script, /\/api\/universal\/grouped/); assert.match(script, /data-delivery-view/); assert.match(script, /\['Delivery %', 'deliveryPercentage'\]/); assert.match(script, /data-quick-insight/); assert.match(script, /quickInsight: universalView\.quickInsight/); assert.match(script, /minimum 10 distinct orders/); assert.match(script, /Ranked by distinct \$\{orderTotalLabel\.toLowerCase\(\)\}/); assert.match(script, /insight-rank-metric/); assert.doesNotMatch(script, /form\.elements\.search/);
 });
 
 
@@ -276,6 +284,63 @@ test('universal grouped report uses normalized dimensions, tenant scope, and pay
   assert.equal(courier.rows.length, 1); assert.equal(courier.rows[0].totalOrders, 2); assert.equal(courier.rows[0].deliveryPercentage, 50);
   const filtered = await store.groupedReport('a', { analyzeBy: 'category_status', paymentMode: 'COD' });
   assert.equal(filtered.totals.totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'Delivered').totalOrders, 1); assert.equal(filtered.rows.find((row) => row.name === 'Delivered').deliveryPercentage, 100); assert.equal(filtered.rows.find((row) => row.name === 'RTO').totalOrders, 0); assert.equal(filtered.rows.find((row) => row.name === 'RTO').deliveryPercentage, 0);
+});
+test('grouped product insights rank filtered rows by basis with minimums and a 15-row cap', async () => {
+  const store = new UniversalStore({ mongoUri: null }); const input = [];
+  const addProduct = (name, statuses, paymentMode = 'COD', orderDate = '2026-01-01') => statuses.forEach((status, index) => input.push({ ...universalRow(`${name}-${index}`, orderDate, name), category: status, originalStatus: status, paymentMode, productCategory: name, courier: name }));
+  addProduct('Top', Array(10).fill('Delivered'));
+  addProduct('Needs', [...Array(4).fill('Delivered'), ...Array(6).fill('RTO')]);
+  addProduct('NdrNeeds', [...Array(4).fill('Delivered'), ...Array(6).fill('NDR')]);
+  addProduct('MixedVolume', [...Array(10).fill('Delivered'), ...Array(2).fill('Cancelled')]);
+  addProduct('ShippedVolume', Array(11).fill('Delivered'));
+  addProduct('UnderBasisMinimum', [...Array(9).fill('Delivered'), 'Cancelled']);
+  addProduct('UnderAllMinimum', Array(9).fill('Delivered'));
+  addProduct('PrepaidOnly', Array(12).fill('Delivered'), 'Prepaid');
+  addProduct('OutsideRange', Array(10).fill('Delivered'), 'COD', '2025-12-31');
+  for (let index = 0; index < 16; index += 1) addProduct(`Eligible-${String(index).padStart(2, '0')}`, Array(10).fill('Delivered'));
+  await store.syncCompletedReport('a', universalReport('a', 'INSIGHTS', '2026-02-01T00:00:00Z'), input);
+  const filters = { analyzeBy: 'courier', paymentMode: 'COD', fromDate: '2026-01-01', toDate: '2026-01-01' };
+  const normal = await store.groupedReport('a', filters);
+  const top = await store.groupedReport('a', { ...filters, quickInsight: 'top-performers' });
+  const attention = await store.groupedReport('a', { ...filters, quickInsight: 'needs-attention' });
+  const volume = await store.groupedReport('a', { ...filters, quickInsight: 'high-volume' });
+  assert.deepEqual(top.rows, normal.rows); assert.deepEqual(top.totals, normal.totals);
+  assert.equal(top.groupLabel, 'Courier'); assert.equal(top.insight.rows.length, 15);
+  assert.ok(top.insight.rows.every((row) => row.orderTotal >= 10));
+  assert.equal(top.insight.rows[0].name, 'ShippedVolume');
+  assert.ok(top.insight.rows.every((row, index, rows) => index === 0 || rows[index - 1].deliveryPercentage >= row.deliveryPercentage));
+  assert.equal(attention.insight.rows.find((row) => row.name === 'Needs').deliveryPercentage, 40);
+  assert.ok(attention.insight.rows.every((row) => row.orderTotal >= 10));
+  const rto = await store.groupedReport('a', { ...filters, quickInsight: 'rto-risk' });
+  const ndr = await store.groupedReport('a', { ...filters, quickInsight: 'ndr-risk' });
+  const categories = await store.groupedReport('a', { ...filters, quickInsight: 'best-categories' });
+  const couriers = await store.groupedReport('a', { ...filters, quickInsight: 'best-couriers' });
+  assert.equal(rto.insight.rows.length, 15); assert.equal(rto.insight.rows[0].name, 'Needs'); assert.equal(rto.insight.rows[0].percentages.RTO, 60);
+  assert.equal(ndr.insight.rows.length, 15); assert.equal(ndr.insight.rows[0].name, 'NdrNeeds'); assert.equal(ndr.insight.rows[0].percentages.NDR, 60);
+  for (const row of [...rto.insight.rows, ...ndr.insight.rows]) assert.ok(row.orderTotal >= 10);
+  assert.ok(rto.insight.rows.every((row, index, rows) => index === 0 || rows[index - 1].percentages.RTO >= row.percentages.RTO));
+  assert.ok(ndr.insight.rows.every((row, index, rows) => index === 0 || rows[index - 1].percentages.NDR >= row.percentages.NDR));
+  assert.equal(categories.insight.rows.length, 15); assert.equal(couriers.insight.rows.length, 15);
+  for (const rows of [categories.insight.rows, couriers.insight.rows]) {
+    assert.ok(rows.every((row) => row.orderTotal >= 10));
+    assert.ok(rows.every((row, index) => index === 0 || rows[index - 1].deliveryPercentage >= row.deliveryPercentage));
+  }
+  assert.equal(volume.insight.rows.length, 15); assert.equal(volume.insight.rows[0].name, 'MixedVolume'); assert.equal(volume.insight.rows[0].orderTotal, 12);
+  const shipped = await store.groupedReport('a', { ...filters, deliveryView: 'shipped_orders', quickInsight: 'high-volume' });
+  assert.equal(shipped.insight.rows[0].name, 'ShippedVolume'); assert.equal(shipped.insight.rows[0].orderTotal, 11);
+  const shippedTop = await store.groupedReport('a', { ...filters, deliveryView: 'shipped_orders', quickInsight: 'top-performers' });
+  assert.ok(!shippedTop.insight.rows.some((row) => row.name === 'UnderBasisMinimum'));
+  const shippedRto = await store.groupedReport('a', { ...filters, deliveryView: 'shipped_orders', quickInsight: 'rto-risk' });
+  const shippedNdr = await store.groupedReport('a', { ...filters, deliveryView: 'shipped_orders', quickInsight: 'ndr-risk' });
+  const shippedCategories = await store.groupedReport('a', { ...filters, deliveryView: 'shipped_orders', quickInsight: 'best-categories' });
+  const shippedCouriers = await store.groupedReport('a', { ...filters, deliveryView: 'shipped_orders', quickInsight: 'best-couriers' });
+  assert.equal(shippedRto.insight.rows[0].percentages.RTO, 60); assert.equal(shippedRto.insight.rows[0].name, 'Needs');
+  assert.equal(shippedNdr.insight.rows[0].percentages.NDR, 60); assert.equal(shippedNdr.insight.rows[0].name, 'NdrNeeds');
+  assert.ok(!shippedRto.insight.rows.some((row) => row.name === 'UnderBasisMinimum'));
+  assert.equal(shippedCategories.insight.rows.length, 15); assert.equal(shippedCouriers.insight.rows.length, 15);
+  assert.ok(!shippedCategories.insight.rows.some((row) => row.name === 'UnderBasisMinimum'));
+  assert.ok(!shippedCouriers.insight.rows.some((row) => row.name === 'UnderBasisMinimum'));
+  assert.ok(!volume.insight.rows.some((row) => ['PrepaidOnly', 'OutsideRange'].includes(row.name)));
 });
 test('report basis applies to summary and each group without changing counts or values', async () => {
   const store = new UniversalStore({ mongoUri: null });

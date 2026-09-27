@@ -1806,6 +1806,122 @@ button:disabled {
   font-weight: 700;
 }
 
+.universal-mode-bar {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.universal-mode-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(140px, max-content));
+  width: fit-content;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #dfe5ef;
+  border-radius: 12px;
+  background: #f3f6fa;
+}
+
+.universal-mode-switch button,
+.universal-insight-nav button {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #59677d;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 750;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.universal-mode-switch button:hover,
+.universal-insight-nav button:hover {
+  color: var(--primary);
+}
+
+.universal-mode-switch button:focus-visible,
+.universal-insight-nav button:focus-visible {
+  outline: 3px solid rgba(58, 105, 194, 0.28);
+  outline-offset: 2px;
+}
+
+.universal-mode-switch button.is-active {
+  border-color: #d5dff7;
+  background: #fff;
+  color: var(--primary);
+  box-shadow: 0 3px 8px rgba(31, 47, 73, 0.08);
+}
+
+.universal-mode-switch button span {
+  margin-right: 5px;
+  color: #c18b36;
+}
+
+.universal-quick-insights {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid #dfe5ef;
+  border-radius: 12px;
+  background: linear-gradient(110deg, #f5f8fc, #fff 68%);
+}
+
+.universal-quick-insights[hidden] {
+  display: none;
+}
+
+.universal-quick-insights-title {
+  color: #536178;
+  font-size: 0.64rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.universal-insight-nav {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  gap: 6px;
+}
+
+.universal-insight-nav button {
+  min-height: 36px;
+  padding: 7px 12px;
+  border-color: #e3e8f0;
+  background: #fff;
+  flex: 0 0 auto;
+}
+
+.universal-insight-nav button.is-active {
+  border-color: #8fa7d8;
+  background: #dfe9fb;
+  color: var(--primary);
+  font-weight: 850;
+  box-shadow: inset 0 -2px 0 var(--primary), 0 1px 3px rgba(31, 47, 73, 0.08);
+}
+
+.universal-insight-nav button:not(:disabled):hover {
+  border-color: #bdcce8;
+  background: #f2f6fd;
+}
+
+.universal-insight-nav button.is-active:hover {
+  border-color: #819bcf;
+  background: #d4e1f8;
+}
+
+.universal-insight-nav button:disabled,
+.universal-insight-nav button:disabled:hover {
+  background: transparent;
+  color: #99a3b2;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .universal-report-controls {
   position: relative;
   z-index: 4;
@@ -2346,6 +2462,47 @@ button:disabled {
   border-radius: var(--radius-lg);
   background: #fff;
   box-shadow: var(--shadow-sm);
+}
+
+.universal-insight-results {
+  margin-top: 28px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+.universal-insight-results[hidden] {
+  display: none;
+}
+
+.universal-insight-results .section-heading {
+  align-items: flex-start;
+}
+
+.universal-insight-results .section-heading > p {
+  margin: 0;
+  max-width: none;
+  white-space: normal;
+  text-align: right;
+}
+
+.universal-insight-results .universal-insight-description {
+  max-width: none;
+  margin: 6px 0 0;
+  color: #69768a;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.universal-insight-table .insight-rank-metric {
+  color: var(--primary);
+  font-weight: 850;
+}
+
+.universal-insight-results .universal-insight-table {
+  min-width: 560px;
 }
 
 .universal-orders .section-heading {
@@ -3082,6 +3239,10 @@ body.modal-open { overflow: hidden; }
     min-width: 0;
   }
 
+  .universal-insight-nav {
+    grid-template-columns: repeat(3, max-content);
+  }
+
   .universal-analysis-section,
   .universal-secondary-filters {
     padding: 17px;
@@ -3161,6 +3322,19 @@ body.modal-open { overflow: hidden; }
   .universal-orders .section-heading > p {
     margin-top: 6px;
     white-space: normal;
+  }
+
+  .universal-insight-results {
+    padding: 18px;
+  }
+
+  .universal-insight-results .section-heading {
+    display: block;
+  }
+
+  .universal-insight-results .section-heading > p {
+    margin-top: 6px;
+    text-align: left;
   }
 
   .universal-table-wrap {
@@ -3517,6 +3691,10 @@ body.modal-open { overflow: hidden; }
 
   .heading-actions .button {
     width: 100%;
+  }
+
+  .universal-insight-nav {
+    grid-template-columns: repeat(2, max-content);
   }
 
   .universal-analysis-control {

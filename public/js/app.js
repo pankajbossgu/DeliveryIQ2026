@@ -685,6 +685,7 @@ function openMobileMenu() { const menu = $('#mobile-navigation'); const backdrop
 (function setupMobileMenu() { const menu = $('#mobile-navigation'); const links = $('#mobile-navigation-links'); const button = $('.menu-button'); if (!menu || !links || !button) return; document.querySelectorAll('.sidebar .nav-link').forEach((link) => { const clone = link.cloneNode(true); clone.addEventListener('click', closeMobileMenu); links.append(clone); }); button.addEventListener('click', () => menu.hidden ? openMobileMenu() : closeMobileMenu()); $('#mobile-menu-backdrop').addEventListener('click', closeMobileMenu); menu.querySelector('.mobile-menu-close').addEventListener('click', closeMobileMenu); document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !menu.hidden) closeMobileMenu(); }); }());
 
 // Universal Report is a server-grouped, tenant-scoped view. The browser only renders it.
+const universalView = { mode: 'insights', quickInsight: 'top-performers' };
 function universalFormatNumber(value) { return Number.isFinite(Number(value)) ? Number(value).toLocaleString('en-IN') : '—'; }
 function universalFormatCurrency(value) { return Number.isFinite(Number(value)) ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(value)) : '—'; }
 function universalFormatDate(value) { const [year, month, day] = String(value || '').split('-').map(Number); const date = year && month && day ? new Date(year, month - 1, day) : null; return date && !Number.isNaN(date) ? new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(date) : '—'; }
@@ -699,6 +700,94 @@ function universalTable(report) { const target = $('#universal-orders-content');
   const fields = [['Delivered', 'delivered'], ['In Transit', 'inTransit'], ['NDR', 'ndr'], ['RTO', 'rto'], ['Cancelled', 'cancelled'], ['Other', 'other'], [report.orderTotalLabel, 'orderTotal'], ['Delivery %', 'deliveryPercentage'], ['Total Order Value', 'totalOrderValue'], ['Delivered Order Value', 'deliveredOrderValue']]; const wrap = el('div', undefined, 'universal-table-wrap'); const table = document.createElement('table'); table.className = 'universal-table'; const head = document.createElement('thead'); const tr = document.createElement('tr'); tr.append(el('th', report.groupLabel)); fields.forEach(([label]) => tr.append(el('th', label, 'numeric'))); head.append(tr); const body = document.createElement('tbody'); rows.forEach((row) => { const line = document.createElement('tr'); line.append(el('th', row.name)); fields.forEach(([, field]) => { const value = field.includes('Value') ? universalFormatCurrency(row[field]) : field === 'deliveryPercentage' ? `${universalFormatNumber(row[field] || 0)}%` : universalFormatNumber(row[field] || 0); line.append(el('td', value, 'numeric')); }); body.append(line); }); table.append(head, body); wrap.append(table); target.append(wrap);
   const cards = el('div', undefined, 'universal-group-cards'); rows.forEach((row) => { const card = el('article', undefined, 'universal-group-card'); card.append(el('h3', row.name), el('p', `${universalFormatNumber(row.orderTotal)} ${report.orderTotalLabel.toLowerCase()}`)); const list = el('dl'); fields.slice(0, 8).forEach(([label, field]) => { const value = field === 'deliveryPercentage' ? `${universalFormatNumber(row[field] || 0)}%` : universalFormatNumber(row[field] || 0); list.append(el('dt', label), el('dd', value)); }); list.append(el('dt', 'Order Value'), el('dd', universalFormatCurrency(row.totalOrderValue)), el('dt', 'Delivered Value'), el('dd', universalFormatCurrency(row.deliveredOrderValue))); card.append(list); cards.append(card); }); target.append(cards); }
 function rangeLabel(range) { return range?.from && range?.to ? `${universalFormatDate(range.from)} — ${universalFormatDate(range.to)}` : 'No current order data'; }
-async function loadUniversal() { const target = $('#universal-orders-content'); if (!target) return; if (state.universal.controller) state.universal.controller.abort(); const controller = new AbortController(); state.universal.controller = controller; universalSkeleton(target); universalSkeleton($('#universal-summary'), true); $('#universal-result-summary').textContent = 'Updating report…'; try { const report = (await universalFetch(`/api/universal/grouped?${universalParams()}`, { signal: controller.signal })).report; if (state.universal.controller !== controller) return; state.universal.report = report; universalCards(report.totals); universalTable(report); $('#universal-orders-title').textContent = `${report.groupLabel} Wise Performance`; const selected = { from: $('#universal-filters').elements.fromDate.value || report.range.from, to: $('#universal-filters').elements.toDate.value || report.range.to }; $('#universal-range').textContent = `Currently showing data from ${rangeLabel(selected)}`; $('#universal-date-trigger span').textContent = rangeLabel(selected); $('#universal-result-summary').textContent = `${universalFormatNumber(report.totals.orderTotal)} ${report.orderTotalLabel.toLowerCase()}`; } catch (error) { if (error.name === 'AbortError') return; clear(target); const box = el('section', undefined, 'universal-empty universal-error'); box.append(el('h3', 'Report could not be loaded'), el('p', error.message)); const retry = el('button', 'Retry', 'button button-primary'); retry.type = 'button'; retry.onclick = loadUniversal; box.append(retry); target.append(box); } }
+function renderUniversalInsight(insight, orderTotalLabel) {
+  const titles = { 'top-performers': 'Top Performing Products', 'needs-attention': 'Needs Attention', 'high-volume': 'High Volume Products', 'rto-risk': 'RTO Risk', 'ndr-risk': 'NDR Risk', 'best-categories': 'Best Categories', 'best-couriers': 'Best Couriers' };
+  const descriptions = {
+    'top-performers': 'Highest delivery rate · minimum 10 distinct orders · up to 15 results',
+    'needs-attention': 'Lowest delivery rate · minimum 10 distinct orders · up to 15 results',
+    'high-volume': `Ranked by distinct ${orderTotalLabel.toLowerCase()} · up to 15 results`,
+    'rto-risk': 'Historical RTO incidence, not predictive · minimum 10 distinct orders · up to 15 results',
+    'ndr-risk': 'Historical NDR incidence, not predictive · minimum 10 distinct orders · up to 15 results',
+    'best-categories': 'Highest delivery rate · minimum 10 distinct orders · up to 15 results',
+    'best-couriers': 'Highest delivery rate · minimum 10 distinct orders · up to 15 results'
+  };
+  const title = titles[insight?.key] || titles[universalView.quickInsight];
+  const description = descriptions[insight?.key] || descriptions[universalView.quickInsight];
+  const statusMetric = { 'rto-risk': ['RTO', 'Historical RTO %'], 'ndr-risk': ['NDR', 'Historical NDR %'] }[insight?.key];
+  const isHighVolume = insight?.key === 'high-volume';
+  const entity = insight?.key === 'best-categories' ? 'category' : insight?.key === 'best-couriers' ? 'courier' : 'product';
+  const entityPlural = entity === 'category' ? 'categories' : `${entity}s`;
+  const target = $('#universal-insight-content');
+  const rows = insight?.rows || [];
+  $('#universal-insight-title').textContent = title;
+  $('#universal-insight-description').textContent = description;
+  $('#universal-insight-summary').textContent = `${rows.length} result${rows.length === 1 ? '' : 's'}`;
+  clear(target);
+  if (!rows.length) {
+    const empty = el('div', undefined, 'universal-empty');
+    empty.append(el('h3', `No ${entityPlural} to show`), el('p', insight?.key === 'high-volume' ? `No ${entityPlural} match these filters.` : `No ${entityPlural} meet the 10-order minimum for this insight.`));
+    target.append(empty);
+    return;
+  }
+  const table = document.createElement('table');
+  table.className = 'universal-table universal-insight-table';
+  table.setAttribute('aria-label', title);
+  const head = document.createElement('thead');
+  const heading = document.createElement('tr');
+  const entityLabel = entity[0].toUpperCase() + entity.slice(1);
+  const metricLabel = isHighVolume ? `Distinct ${orderTotalLabel}` : statusMetric?.[1] || 'Delivery %';
+  [['Rank', false], [entityLabel, false], [metricLabel, true], ...(!isHighVolume ? [[orderTotalLabel, true]] : [])].forEach(([label, numeric], index) => {
+    const cell = el('th', label, numeric ? 'numeric' : '');
+    if (index === 2) cell.classList.add('insight-rank-metric');
+    heading.append(cell);
+  });
+  head.append(heading);
+  const body = document.createElement('tbody');
+  rows.forEach((row, index) => {
+    const line = document.createElement('tr');
+    line.append(el('td', String(index + 1), 'numeric'));
+    const name = el('th', row.name); name.scope = 'row'; line.append(name);
+    const metric = isHighVolume ? universalFormatNumber(row.orderTotal) : `${universalFormatNumber(statusMetric ? row.percentages?.[statusMetric[0]] : row.deliveryPercentage)}%`;
+    line.append(el('td', metric, 'numeric insight-rank-metric'));
+    if (!isHighVolume) line.append(el('td', universalFormatNumber(row.orderTotal), 'numeric'));
+    body.append(line);
+  });
+  table.append(head, body);
+  const wrap = el('div', undefined, 'universal-table-wrap'); wrap.append(table); target.append(wrap);
+}
+async function loadUniversal() {
+  const target = $('#universal-orders-content');
+  if (!target) return;
+  const insightsActive = universalView.mode === 'insights';
+  $('#universal-orders').hidden = insightsActive;
+  $('#universal-insight-results').hidden = !insightsActive;
+  if (state.universal.controller) state.universal.controller.abort();
+  const controller = new AbortController(); state.universal.controller = controller;
+  universalSkeleton(target); universalSkeleton($('#universal-summary'), true);
+  if (insightsActive) universalSkeleton($('#universal-insight-content'));
+  $('#universal-result-summary').textContent = 'Updating report…';
+  $('#universal-insight-summary').textContent = insightsActive ? 'Updating insight…' : '';
+  try {
+    const extra = insightsActive ? { quickInsight: universalView.quickInsight } : {};
+    const report = (await universalFetch(`/api/universal/grouped?${universalParams(extra)}`, { signal: controller.signal })).report;
+    if (state.universal.controller !== controller) return;
+    state.universal.report = report; universalCards(report.totals); universalTable(report);
+    if (insightsActive) renderUniversalInsight(report.insight, report.orderTotalLabel);
+    $('#universal-orders-title').textContent = `${report.groupLabel} Wise Performance`;
+    const selected = { from: $('#universal-filters').elements.fromDate.value || report.range.from, to: $('#universal-filters').elements.toDate.value || report.range.to };
+    $('#universal-range').textContent = `Currently showing data from ${rangeLabel(selected)}`;
+    $('#universal-date-trigger span').textContent = rangeLabel(selected);
+    $('#universal-result-summary').textContent = `${universalFormatNumber(report.totals.orderTotal)} ${report.orderTotalLabel.toLowerCase()}`;
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    const errorTarget = insightsActive ? $('#universal-insight-content') : target;
+    if (insightsActive) $('#universal-insight-summary').textContent = '';
+    clear(errorTarget);
+    const box = el('section', undefined, 'universal-empty universal-error');
+    box.append(el('h3', 'Report could not be loaded'), el('p', error.message));
+    const retry = el('button', 'Retry', 'button button-primary'); retry.type = 'button'; retry.onclick = loadUniversal; box.append(retry); errorTarget.append(box);
+  }
+}
 async function universalExport(kind) { const status = $('#universal-export-status'); status.textContent = 'Preparing report…'; const [exportType, format] = kind.split('-'); try { const response = await fetch(`/api/universal/export?${universalParams({ exportType, format })}`); if (!response.ok) { const payload = await response.json().catch(() => ({})); throw new Error(payload.message || 'Export could not be completed.'); } const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `deliveryiq-${exportType}-report.${format}`; document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url); status.textContent = 'Download ready.'; } catch (error) { status.textContent = error.message || 'Export could not be completed.'; } }
 (function setupUniversalReport() { const form = $('#universal-filters'); if (!form) return; const pop = $('#universal-date-popover'); const trigger = $('#universal-date-trigger'); const closeDate = () => { pop.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }; const closeDownload = () => { $('#universal-export-menu').hidden = true; $('#universal-export').setAttribute('aria-expanded', 'false'); }; closeDate(); closeDownload(); document.querySelectorAll('[data-analyze]').forEach((button) => button.onclick = () => { form.elements.analyzeBy.value = button.dataset.analyze; setActive('[data-analyze]', button.dataset.analyze, 'analyze'); loadUniversal(); }); document.querySelectorAll('[data-delivery-view]').forEach((button) => button.onclick = () => { form.elements.deliveryView.value = button.dataset.deliveryView; setActive('[data-delivery-view]', button.dataset.deliveryView, 'deliveryView'); loadUniversal(); }); document.querySelectorAll('[data-payment]').forEach((button) => button.onclick = () => { form.elements.paymentMode.value = button.dataset.payment; setActive('[data-payment]', button.dataset.payment, 'payment'); loadUniversal(); }); trigger.onclick = () => { const open = pop.hidden; pop.hidden = !open; trigger.setAttribute('aria-expanded', String(open)); if (open) { $('#universal-from-date').value = form.elements.fromDate.value; $('#universal-to-date').value = form.elements.toDate.value; } }; document.querySelectorAll('[data-range]').forEach((button) => button.onclick = () => { const today = new Date(); const from = button.dataset.range === 'month' ? new Date(today.getFullYear(), today.getMonth(), 1) : new Date(today.getFullYear(), today.getMonth(), today.getDate() - Number(button.dataset.range) + 1); $('#universal-from-date').value = localDate(from); $('#universal-to-date').value = localDate(today); }); $('#universal-date-close').onclick = closeDate; $('#universal-date-cancel').onclick = closeDate; $('#universal-date-apply').onclick = () => { const from = $('#universal-from-date').value; const to = $('#universal-to-date').value; const error = $('#universal-date-error'); if (!from || !to || from > to) { error.hidden = false; error.textContent = 'Start Date must be on or before End Date.'; return; } error.hidden = true; form.elements.fromDate.value = from; form.elements.toDate.value = to; closeDate(); loadUniversal(); }; $('#universal-export').onclick = () => { const menu = $('#universal-export-menu'); const open = menu.hidden; menu.hidden = !open; $('#universal-export').setAttribute('aria-expanded', String(open)); }; document.querySelectorAll('[data-export]').forEach((button) => button.onclick = () => { closeDownload(); universalExport(button.dataset.export); }); $('#universal-refresh').onclick = loadUniversal; document.addEventListener('pointerdown', (event) => { if (!pop.hidden && !pop.contains(event.target) && !trigger.contains(event.target)) closeDate(); const menu = $('#universal-export-menu'); if (!menu.hidden && !menu.contains(event.target) && !$('#universal-export').contains(event.target)) closeDownload(); }); document.addEventListener('keydown', (event) => { if (event.key === 'Escape') { closeDate(); closeDownload(); } }); }());
+(function setupUniversalViewNavigation() { document.querySelectorAll('[data-universal-mode]').forEach((button) => button.onclick = () => { universalView.mode = button.dataset.universalMode; setActive('[data-universal-mode]', universalView.mode, 'universalMode'); $('#universal-quick-insights').hidden = universalView.mode !== 'insights'; loadUniversal(); }); document.querySelectorAll('[data-quick-insight]:not(:disabled)').forEach((button) => button.onclick = () => { universalView.quickInsight = button.dataset.quickInsight; setActive('[data-quick-insight]', universalView.quickInsight, 'quickInsight'); if (universalView.mode === 'insights') loadUniversal(); }); }());

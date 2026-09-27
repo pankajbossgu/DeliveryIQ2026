@@ -3,6 +3,7 @@ const crypto = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 const { MAX_SOURCE_ROWS, normalizeOrderId, normalizePaymentMode } = require('./upload');
 const CATEGORIES = ['Delivered', 'In Transit', 'NDR', 'RTO', 'Cancelled', 'Other'];
+const QUICK_INSIGHTS = new Set(['top-performers', 'needs-attention', 'high-volume', 'rto-risk', 'ndr-risk', 'best-categories', 'best-couriers']);
 const UNIVERSAL_SYNC_BATCH_SIZE = 2000;
 function recordDuration(timings, name, startedAt) { if (timings) { const stages = timings.stages || (timings.stages = {}); stages[name] = (stages[name] || 0) + performance.now() - startedAt; } }
 const rowSchema = new mongoose.Schema({ reportId: { type: String, index: true }, clientId: { type: String, index: true }, orderId: String, normalizedOrderId: String, orderDate: String, category: String, originalStatus: String, normalizedStatus: String, originalProductName: String, normalizedProductName: String, masterCategory: String, productCategory: String, paymentMode: String, courier: String, orderSource: String, quantity: Number, productPrice: Number, rowValue: Number }, { versionKey: false });
@@ -193,7 +194,9 @@ class UniversalStore {
   async groupedReport(clientId, filters = {}) {
     const analyzeBy = filters.analyzeBy || 'product';
     const deliveryView = filters.deliveryView || 'all_orders';
+    const quickInsight = filters.quickInsight || null;
     if (!['all_orders', 'shipped_orders'].includes(deliveryView)) throw new Error('Invalid report basis.');
+    if (quickInsight && !QUICK_INSIGHTS.has(quickInsight)) throw new Error('Invalid Universal Report insight.');
     const labels = { product: 'Product', product_category: 'Product Category', courier: 'Courier', category_status: 'Status Category' };
     if (!labels[analyzeBy]) throw new Error('Invalid Universal Report view.');
     const filter = universalFilter(clientId, filters);
@@ -203,8 +206,10 @@ class UniversalStore {
     const paymentModes = database ? await UniversalOrder.distinct('paymentMode', { clientId, paymentMode: { $type: 'string', $ne: '' } }) : [...new Set([...this.orders.values()].filter((order) => order.clientId === clientId && order.paymentMode).map((order) => order.paymentMode))];
     const emptyCounts = () => Object.fromEntries(CATEGORIES.map((category) => [category, 0]));
     const groups = new Map();
-    const add = (key, name, order, value) => {
-      const item = groups.get(key) || { name, totalOrders: 0, delivered: 0, inTransit: 0, ndr: 0, rto: 0, cancelled: 0, other: 0, totalOrderValue: 0, deliveredOrderValue: 0, _orders: new Set() };
+    const insightAnalyzeBy = quickInsight === 'best-categories' ? 'product_category' : quickInsight === 'best-couriers' ? 'courier' : 'product';
+    const insightGroups = quickInsight && analyzeBy !== insightAnalyzeBy ? new Map() : null;
+    const add = (key, name, order, value, target = groups) => {
+      const item = target.get(key) || { name, totalOrders: 0, delivered: 0, inTransit: 0, ndr: 0, rto: 0, cancelled: 0, other: 0, totalOrderValue: 0, deliveredOrderValue: 0, _orders: new Set() };
       if (!item._orders.has(order.canonicalOrderId)) {
         item._orders.add(order.canonicalOrderId); item.totalOrders += 1;
         const category = order.statusCategory && CATEGORIES.includes(order.statusCategory) ? order.statusCategory : 'Other';
@@ -212,7 +217,7 @@ class UniversalStore {
       }
       item.totalOrderValue += Number(value || 0);
       if (order.statusCategory === 'Delivered') item.deliveredOrderValue += Number(value || 0);
-      groups.set(key, item);
+      target.set(key, item);
     };
     for (const order of orders) {
       if (analyzeBy === 'product' || analyzeBy === 'product_category') {
@@ -227,6 +232,21 @@ class UniversalStore {
       } else {
         const name = CATEGORIES.includes(order.statusCategory) ? order.statusCategory : 'Other'; add(name, name, order, order.totalValue);
       }
+      if (insightGroups && insightAnalyzeBy === 'product_category') {
+        for (const line of order.products || []) {
+          const name = String(line.productCategory || 'Unmapped').trim() || 'Unmapped'; const key = String(line.productCategory || 'unmapped').trim().toLowerCase() || 'unmapped';
+          add(key, name, order, line.rowValue, insightGroups);
+        }
+      } else if (insightGroups && insightAnalyzeBy === 'courier') {
+        const name = String(order.courier || 'Unmapped courier').trim() || 'Unmapped courier'; add(name.toLowerCase(), name, order, order.totalValue, insightGroups);
+      } else if (insightGroups) {
+        for (const line of order.products || []) {
+          const raw = line.normalizedProductName || line.originalProductName;
+          const display = line.originalProductName || line.normalizedProductName;
+          const name = String(display || 'Unmapped').trim() || 'Unmapped'; const key = String(raw || 'unmapped').trim().toLowerCase() || 'unmapped';
+          add(key, name, order, line.rowValue, insightGroups);
+        }
+      }
     }
     if (analyzeBy === 'category_status') for (const category of CATEGORIES) if (!groups.has(category)) groups.set(category, { name: category, totalOrders: 0, delivered: 0, inTransit: 0, ndr: 0, rto: 0, cancelled: 0, other: 0, totalOrderValue: 0, deliveredOrderValue: 0, _orders: new Set() });
     const shippedBasis = deliveryView === 'shipped_orders';
@@ -240,17 +260,28 @@ class UniversalStore {
       ]));
       return { shippedOrders, orderTotal, orderTotalLabel, percentages, deliveryPercentage: percentages.Delivered };
     };
-    const rows = [...groups.values()].map(({ _orders, ...row }) => ({
+    const groupedRows = (source) => [...source.values()].map(({ _orders, ...row }) => ({
       ...Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'number' ? Number(value.toFixed(2)) : value])),
       ...basisMetrics(row.totalOrders, { Delivered: row.delivered, 'In Transit': row.inTransit, NDR: row.ndr, RTO: row.rto, Cancelled: row.cancelled, Other: row.other })
-    })).sort((a, b) => b.totalOrders - a.totalOrders || a.name.localeCompare(b.name));
+    }));
+    const rows = groupedRows(groups).sort((a, b) => b.totalOrders - a.totalOrders || a.name.localeCompare(b.name));
+    let insight;
+    if (quickInsight) {
+      const source = insightGroups ? groupedRows(insightGroups) : rows;
+      const metric = quickInsight === 'high-volume' ? 'orderTotal' : quickInsight === 'rto-risk' ? 'percentages.RTO' : quickInsight === 'ndr-risk' ? 'percentages.NDR' : 'deliveryPercentage';
+      const direction = quickInsight === 'needs-attention' ? 1 : -1;
+      const ranked = source.filter((row) => quickInsight === 'high-volume' || row.orderTotal >= 10);
+      const value = (row) => metric.startsWith('percentages.') ? row.percentages[metric.slice('percentages.'.length)] : row[metric];
+      ranked.sort((a, b) => direction * (value(a) - value(b)) || b.orderTotal - a.orderTotal || a.name.localeCompare(b.name));
+      insight = { key: quickInsight, rows: ranked.slice(0, 15) };
+    }
     const totals = summaryFromOrders(orders);
     totals.deliveredOrders = totals.byStatusCategory.Delivered || 0; totals.inTransitOrders = totals.byStatusCategory['In Transit'] || 0; totals.ndrOrders = totals.byStatusCategory.NDR || 0; totals.rtoOrders = totals.byStatusCategory.RTO || 0; totals.cancelledOrders = totals.byStatusCategory.Cancelled || 0; totals.otherOrders = totals.byStatusCategory.Other || 0;
     totals.deliveredOrderValue = Number(orders.filter((order) => order.statusCategory === 'Delivered').reduce((sum, order) => sum + Number(order.totalValue || 0), 0).toFixed(2));
     totals.deliveryView = deliveryView;
     Object.assign(totals, basisMetrics(totals.totalOrders, { ...emptyCounts(), ...totals.byStatusCategory }));
     const dates = orders.map((order) => order.orderDate).filter(Boolean).sort();
-    return { analyzeBy, deliveryView, orderTotalLabel, groupLabel: labels[analyzeBy], rows, totals, paymentModes: paymentModes.sort((a, b) => String(a).localeCompare(String(b))), range: { from: dates[0] || null, to: dates.at(-1) || null } };
+    return { analyzeBy, deliveryView, orderTotalLabel, groupLabel: labels[analyzeBy], rows, totals, ...(insight ? { insight } : {}), paymentModes: paymentModes.sort((a, b) => String(a).localeCompare(String(b))), range: { from: dates[0] || null, to: dates.at(-1) || null } };
   }
   async markFailed(clientId, reportId) {
     const error = 'Universal report synchronization could not be completed.';
