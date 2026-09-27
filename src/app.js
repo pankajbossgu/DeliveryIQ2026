@@ -130,7 +130,10 @@ async function classifyProcess(job, stage, cancelled = async () => false) {
   // Persist the complete review snapshot before ProcessingStore exposes
   // review_required, so the client never opens an empty review window.
   if (!await stage('preparing_review') || await cancelled()) return { cancelled: true };
-  await mappingStore.saveSuggestions(clientId, products);
+  // Classification jobs carry their tenant scope. Persist suggestions against
+  // that scope rather than the request-time default so a completed Gemini run
+  // can always be followed by the matching client's review snapshot.
+  await mappingStore.saveSuggestions(job.clientId, products);
   if (await cancelled()) return { cancelled: true };
   const unresolved = result.classifications.statuses.some((item) => item.classificationRequired) || products.some((item) => item.classificationRequired);
   if (unresolved) return result;
