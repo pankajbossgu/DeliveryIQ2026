@@ -43,6 +43,87 @@ test('server accepts usable new categories but rejects malformed and partial cla
   assert.equal(parsed[3].productCategory, 'NO_MATCH');
 });
 
+test('Gemini receives specific product-type rules and retains specific review suggestions for every returned product', async () => {
+  const cases = [
+    ['Anti Dandruff Shampoo', 'Beauty', 'Shampoo'],
+    ['Hair Serum', 'Beauty', 'Hair Serum'],
+    ['Bluetooth Speaker', 'Electronics', 'Bluetooth Speakers'],
+    ['Neckband Earphones', 'Electronics', 'Neckband Earphones'],
+    ['Water Bottle', 'Home & Kitchen', 'Water Bottles'],
+    ['Coffee Mug', 'Home & Kitchen', 'Coffee Mugs'],
+    ['Non Stick Pan', 'Home & Kitchen', 'Non-Stick Pans'],
+    ['Face Wash', 'Beauty', 'Face Wash'],
+    ['Lip Balm', 'Beauty', 'Lip Balms'],
+    ['Desk Lamp', 'Home & Kitchen', 'Desk Lamps'],
+    ['Phone Stand', 'Electronics', 'Phone Stands']
+  ];
+  let request;
+  const provider = new GeminiProductClassifier({ apiKey: 'synthetic', fetchImpl: async (_url, options) => {
+    request = JSON.parse(options.body);
+    return response(cases.map(([product, masterCategory, productCategory]) => ({ product, masterCategory, productCategory })));
+  } });
+  const existing = { masterCategories: ['Beauty', 'Electronics', 'Home & Kitchen'], productCategories: [{ name: 'Hair Care', masterCategory: 'Beauty' }, { name: 'Audio', masterCategory: 'Electronics' }, { name: 'Drinkware', masterCategory: 'Home & Kitchen' }, { name: 'Cookware', masterCategory: 'Home & Kitchen' }, { name: 'Face Wash', masterCategory: 'Beauty' }] };
+  const result = await classifyProducts(cases.map(([product]) => product), { ...existing, provider });
+  const content = JSON.parse(request.contents[0].parts[0].text);
+  assert.match(content.instruction, /actual reusable product type/);
+  assert.match(content.instruction, /Water Bottle.*Water Bottles/);
+  assert.equal(result.items.length, cases.length);
+  assert.deepEqual(result.items.map((item) => [item.value, item.suggestedMasterCategory, item.suggestedProductCategory]), cases);
+  assert.ok(result.items.every((item) => item.suggestionStatus === 'AI Suggested' && item.classificationRequired));
+});
+
+test('specific existing category is reused, new pairs remain review-only, and ambiguous products remain No Match', async () => {
+  const existing = { masterCategories: ['Beauty'], productCategories: [{ name: 'Shampoos', masterCategory: 'Beauty' }] };
+  const result = await classifyProducts(['Anti Dandruff Shampoo', 'Mystery Bundle'], { ...existing, provider: { classifyProducts(products) { return { results: [{ product: products[0], masterCategory: 'Beauty', productCategory: 'Shampoos' }, { product: products[1], masterCategory: 'NO_MATCH', productCategory: 'NO_MATCH' }] }; } } });
+  assert.equal(result.items.length, 2);
+  assert.deepEqual(result.items[0].suggestedProductCategory, 'Shampoos');
+  assert.equal(result.items[1].suggestionStatus, 'No Match');
+  const noTaxonomy = await classifyProducts(['Bluetooth Speaker'], { provider: { classifyProducts(products) { return { results: [{ product: products[0], masterCategory: 'Electronics', productCategory: 'Bluetooth Speakers' }] }; } } });
+  assert.deepEqual([noTaxonomy.items[0].suggestedMasterCategory, noTaxonomy.items[0].suggestedProductCategory, noTaxonomy.items[0].classificationRequired], ['Electronics', 'Bluetooth Speakers', true]);
+});
+
+test('backend converts obvious department-level categories into visible No Match results without dropping products', () => {
+  const parsed = validateGeminiResults({ results: [
+    { product: 'Anti Dandruff Shampoo', masterCategory: 'Beauty', productCategory: 'Hair Care' },
+    { product: 'Bluetooth Speaker', masterCategory: 'Electronics', productCategory: 'Audio' },
+    { product: 'Water Bottle', masterCategory: 'Home & Kitchen', productCategory: 'Drinkware' },
+    { product: 'Non Stick Pan', masterCategory: 'Home & Kitchen', productCategory: 'Cookware' },
+    { product: 'Face Wash', masterCategory: 'Beauty', productCategory: 'Face Wash' }
+  ] }, ['Anti Dandruff Shampoo', 'Bluetooth Speaker', 'Water Bottle', 'Non Stick Pan', 'Face Wash']);
+  assert.deepEqual(parsed.map((item) => item.product), ['Anti Dandruff Shampoo', 'Bluetooth Speaker', 'Water Bottle', 'Non Stick Pan', 'Face Wash']);
+  assert.deepEqual(parsed.slice(0, 4).map((item) => item.productCategory), ['NO_MATCH', 'NO_MATCH', 'NO_MATCH', 'NO_MATCH']);
+  assert.equal(parsed[4].productCategory, 'Face Wash');
+});
+
+test('broad Gemini responses remain visible No Match review items while specific responses remain suggestions', async () => {
+  const products = ['Anti Dandruff Shampoo', 'Bluetooth Speaker', 'Water Bottle', 'Non Stick Pan', 'Face Wash'];
+  const provider = new GeminiProductClassifier({ apiKey: 'synthetic', fetchImpl: async () => response([
+    { product: 'Anti Dandruff Shampoo', masterCategory: 'Beauty', productCategory: 'Hair Care' },
+    { product: 'Bluetooth Speaker', masterCategory: 'Electronics', productCategory: 'Audio' },
+    { product: 'Water Bottle', masterCategory: 'Home & Kitchen', productCategory: 'Drinkware' },
+    { product: 'Non Stick Pan', masterCategory: 'Home & Kitchen', productCategory: 'Cookware' },
+    { product: 'Face Wash', masterCategory: 'Beauty', productCategory: 'Face Wash' }
+  ]) });
+  const responseFromGemini = await provider.classifyProducts(products);
+  assert.deepEqual(responseFromGemini.results.map((item) => item.product), products);
+  assert.deepEqual(responseFromGemini.results.slice(0, 4).map((item) => item.productCategory), ['NO_MATCH', 'NO_MATCH', 'NO_MATCH', 'NO_MATCH']);
+  assert.deepEqual(responseFromGemini.failedProducts, []);
+  const classified = await classifyProducts(products, { provider: new GeminiProductClassifier({ apiKey: 'synthetic', fetchImpl: async () => response([
+    { product: 'Anti Dandruff Shampoo', masterCategory: 'Beauty', productCategory: 'Shampoo' },
+    { product: 'Bluetooth Speaker', masterCategory: 'Electronics', productCategory: 'Audio' },
+    { product: 'Water Bottle', masterCategory: 'Home & Kitchen', productCategory: 'Drinkware' },
+    { product: 'Non Stick Pan', masterCategory: 'Home & Kitchen', productCategory: 'Cookware' },
+    { product: 'Face Wash', masterCategory: 'Beauty', productCategory: 'Face Wash' }
+  ]) }) });
+  assert.equal(classified.items.length, products.length);
+  assert.equal(classified.items[0].suggestionStatus, 'AI Suggested');
+  for (const item of classified.items.slice(1, 4)) {
+    assert.equal(item.suggestionStatus, 'No Match');
+    assert.equal(item.classificationRequired, true);
+  }
+  assert.equal(classified.items[4].suggestionStatus, 'AI Suggested');
+});
+
 test('No Match differs from Failed; empty taxonomy calls Gemini for a possible new pair', async () => {
   let calls = 0;
   const provider = new GeminiProductClassifier({ apiKey: 'synthetic', fetchImpl: async (_url, options) => { calls++; const [product] = JSON.parse(JSON.parse(options.body).contents[0].parts[0].text).products; return response([answer(product, { masterCategory: 'NO_MATCH', productCategory: 'NO_MATCH' })]); } });
