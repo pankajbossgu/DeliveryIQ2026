@@ -588,6 +588,19 @@ class ProcessingStore {
     this.jobs.set(processId, saved);
     return this.hydrate(saved, { includeRows: false });
   }
+  // Product reclassification stays within the existing review process. A short
+  // persisted lease serializes retries across tabs/instances and expires if the
+  // request is interrupted; it does not change report/status processing.
+  async claimProductRetry(clientId, processId, value) {
+    const job = await this.get(clientId, processId, { includeRows: false });
+    if (job?.status !== 'review_required' || new Date(job.productRetry?.expiresAt || 0) > new Date()) return null;
+    const productRetry = { value, token: crypto.randomUUID(), expiresAt: new Date(Date.now() + 120000) };
+    return await this.publish(job, { productRetry }, { review: true }) ? productRetry : null;
+  }
+  async releaseProductRetry(clientId, processId, token) {
+    const job = await this.get(clientId, processId, { includeRows: false });
+    if (job?.productRetry?.token === token) await this.publish(job, { productRetry: null }, { review: true });
+  }
   async updateReview(clientId, processId, kind, value, update) { return this.updateReviews(clientId, processId, kind, [{ ...update, value }]); }
   async updateReviews(clientId, processId, kind, updates) {
     const key = kind === 'product' ? 'products' : 'statuses';

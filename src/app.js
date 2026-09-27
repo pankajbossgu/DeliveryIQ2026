@@ -9,6 +9,7 @@ const { REPORT_CATEGORIES } = require('./classification');
 const { MappingStore } = require('./mappings');
 const { ReportStore, ProcessingStore, csv: reportCsv, csvLine, universalExportRows, UNIVERSAL_EXPORT_HEADERS } = require('./reports');
 const { GeminiProductClassifier } = require('./product-classifier');
+const { classifyProducts, normalizeProductName } = require('./product');
 
 const app = express(); const publicDirectory = path.join(__dirname, '..', 'public'); const mappingStore = new MappingStore(); const reportStore = new ReportStore(); const processingStore = new ProcessingStore();
 const SESSION_COOKIE = 'deliveryiq_admin_session';
@@ -90,9 +91,9 @@ function finalRowsFromProcess(job) {
   if (unresolved) return null;
   const products = new Map(classifications.products.map((item) => [item.normalizedProductName, item]));
   const statuses = new Map(classifications.statuses.map((item) => [item.value, item]));
-  return job.input.normalizedRows.map((source) => { const product = products.get(source.normalizedProductName); const status = statuses.get(source.originalStatus); return { ...source, category: status?.category, normalizedStatus: status?.normalizedStatus, masterCategory: product?.masterCategory, productCategory: product?.productCategory || product?.category, productMappingSource: product?.mappingSource, productClassificationRequired: false }; });
+  return job.input.normalizedRows.map((source) => { const product = products.get(normalizeProductName(source.originalProductName)); const status = statuses.get(source.originalStatus); return { ...source, category: status?.category, normalizedStatus: status?.normalizedStatus, masterCategory: product?.masterCategory, productCategory: product?.productCategory || product?.category, productMappingSource: product?.mappingSource, productClassificationRequired: false }; });
 }
-async function classifyProcess(job, stage, cancelled = async () => false) { console.info(JSON.stringify({ event: 'report_process_classification_started', processId: job.processId })); if (!await stage('checking_status_mappings') || await cancelled()) return { cancelled: true }; const { statusMappings, productMappings, masterCategories, productCategories, suggestions } = await mappingStore.classificationContext(job.clientId, job.input.normalizedRows); if (!await stage('mapping_statuses') || await cancelled()) return { cancelled: true }; if (await cancelled() || !await stage('checking_products') || !await stage('ai_product_classification')) return { cancelled: true }; const result = await processValidatedUpload(job.input, { statusMappings, productMappings, masterCategories, productCategories, suggestions, productClassifier, includeRows: false }); if (await cancelled()) return { cancelled: true }; const products = result.classifications.products; await mappingStore.saveSuggestions(clientId, products); if (await cancelled()) return { cancelled: true }; const unresolved = result.classifications.statuses.some((item) => item.classificationRequired) || products.some((item) => item.classificationRequired); if (unresolved) return result; if (!await stage('finalizing_report') || await cancelled()) return { cancelled: true }; return { result, report: await reportStore.create(clientId, { templateType: result.templateType, sourceFileName: result.file.name, rows: finalRowsFromProcess({ ...job, result }), requestId: job.requestId }) }; }
+async function classifyProcess(job, stage, cancelled = async () => false) { console.info(JSON.stringify({ event: 'report_process_classification_started', processId: job.processId })); if (!await stage('checking_status_mappings') || await cancelled()) return { cancelled: true }; const { statusMappings, productMappings, masterCategories, productCategories, suggestions } = await mappingStore.classificationContext(job.clientId, job.input.normalizedRows); if (!await stage('mapping_statuses') || await cancelled()) return { cancelled: true }; if (await cancelled() || !await stage('checking_products') || !await stage('ai_product_classification')) return { cancelled: true }; const result = await processValidatedUpload(job.input, { statusMappings, productMappings, masterCategories, productCategories, suggestions, productClassifier: { classifyProducts: (products, taxonomy) => productClassifier.classifyProducts(products, taxonomy, { isCancelled: cancelled, onProgress: (productClassificationProgress) => processingStore.publish(job, { productClassificationProgress }) }) }, includeRows: false }); if (await cancelled()) return { cancelled: true }; const products = result.classifications.products; await mappingStore.saveSuggestions(clientId, products); if (await cancelled()) return { cancelled: true }; const unresolved = result.classifications.statuses.some((item) => item.classificationRequired) || products.some((item) => item.classificationRequired); if (unresolved) return result; if (!await stage('finalizing_report') || await cancelled()) return { cancelled: true }; return { result, report: await reportStore.create(clientId, { templateType: result.templateType, sourceFileName: result.file.name, rows: finalRowsFromProcess({ ...job, result }), requestId: job.requestId }) }; }
 app.get('/api/report-processes/active', async (request, response) => { const job = await processingStore.getActiveProcess(clientId, { includeRows: false }); return response.json({ success: true, process: processingStore.public(job) }); });
 app.get('/api/report-processes/:processId', async (request, response) => { const job = await processingStore.get(clientId, request.params.processId, { includeRows: false }); return job ? response.json({ success: true, process: processingStore.public(job) }) : response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be found.' }); });
 app.post('/api/report-processes/:processId/start', async (request, response) => { console.info(JSON.stringify({ event: 'report_process_start_requested', processId: request.params.processId })); const job = await processingStore.get(clientId, request.params.processId, { includeRows: false }); if (!job) return response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be found.' }); if (['queued', 'failed'].includes(job.status)) { job.status = 'processing'; job.stage = 'preparing_data'; job.error = null; const claimed = await processingStore.save(job, { metadataOnly: true }); if (claimed !== job) return response.status(202).json({ success: true, process: processingStore.public(claimed) }); processingStore.start(clientId, job.processId, classifyProcess, { alreadyStarted: true }).catch((error) => console.warn(JSON.stringify({ event: 'report_process_start_failed', processId: job.processId, message: error?.message || 'unknown' }))); } return response.status(202).json({ success: true, process: processingStore.public(job) }); });
@@ -102,6 +103,9 @@ async function applyReviewDecision(job, kind, value, body) {
   let update;
   if (kind === 'product') {
     const action = body?.action;
+    const item = job.result.classifications.products.find((x) => x.value === value);
+    if (!item) throw Object.assign(new Error('Product not found'), { code: 'REVIEW_ITEM_NOT_FOUND' });
+    if (action === 'approve' && (item.suggestionStatus !== 'AI Suggested' || body.masterCategory !== item.suggestedMasterCategory || body.productCategory !== item.suggestedProductCategory)) throw Object.assign(new Error('Suggestion changed'), { code: 'INVALID_SUGGESTION' });
     if (action === 'reject') {
       await mappingStore.decideSuggestion(clientId, value, 'Client Rejected', {});
       update = { suggestionStatus: 'Client Rejected', status: 'Client Rejected', classificationRequired: true, manualReason: 'AI suggestion rejected. Please assign a category manually.', suggestedCategory: null, suggestedMasterCategory: null, suggestedProductCategory: null, mappingSource: 'needs-review' };
@@ -115,12 +119,35 @@ async function applyReviewDecision(job, kind, value, body) {
     const mapping = await mappingStore.save('status', clientId, value, body?.category);
     update = { category: mapping.category, status: 'Client Modified', classificationRequired: false };
   }
+  if (kind === 'product') update.suggestionHistory = (await mappingStore.listSuggestions(clientId, [normalizeProductName(value)]))[0]?.history || [];
   return processingStore.updateReview(clientId, job.processId, kind, value, update);
 }
+function productRetryActive(job) { return new Date(job?.productRetry?.expiresAt || 0) > new Date(); }
+app.post('/api/report-processes/:processId/products/retry', universalRoute(async (request, response) => {
+  const job = await processingStore.get(clientId, request.params.processId, { includeRows: false });
+  if (!job) return response.status(404).json({ message: 'Report process not found.' });
+  const item = job.result?.classifications?.products.find((x) => x.value === request.body?.value);
+  if (job.status !== 'review_required' || !item?.classificationRequired || item.manualOnly) return response.status(409).json({ message: 'This product requires manual assignment or is already resolved.' });
+  const claim = await processingStore.claimProductRetry(clientId, job.processId, item.value);
+  if (!claim) return response.status(409).json({ message: 'Another product is being reclassified. Please wait, then retry.' });
+  try {
+    const context = await mappingStore.classificationContext(clientId, [{ originalProductName: item.value, originalStatus: '' }]);
+    const result = await classifyProducts([item.value], { ...context, mappings: context.productMappings, provider: productClassifier, retry: true });
+    const latest = await processingStore.get(clientId, job.processId, { includeRows: false });
+    if (latest?.status !== 'review_required' || latest.productRetry?.token !== claim.token || !productRetryActive(latest)) return response.status(409).json({ message: 'This review changed. Reload to see its current state.' });
+    const update = { ...result.items[0], count: item.count, status: result.items[0].suggestionStatus || 'Approved' };
+    await mappingStore.saveSuggestions(clientId, [update], { retry: true });
+    const saved = await processingStore.updateReview(clientId, job.processId, 'product', item.value, update);
+    if (!saved) return response.status(409).json({ message: 'This review changed. Reload before retrying.' });
+    await processingStore.releaseProductRetry(clientId, job.processId, claim.token);
+    return response.json({ success: true, process: processingStore.public(await processingStore.get(clientId, job.processId, { includeRows: false })) });
+  } finally { await processingStore.releaseProductRetry(clientId, job.processId, claim.token); }
+}));
 app.post('/api/report-processes/:processId/review/:kind/bulk', async (request, response) => {
   const kind = mappingKind(request.params.kind); const job = await processingStore.get(clientId, request.params.processId, { includeRows: false });
   const values = Array.isArray(request.body?.values) ? [...new Set(request.body.values.map((value) => String(value || '').trim()).filter(Boolean))] : [];
   if (!kind || !job) return response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be found.' });
+  if (kind === 'product' && productRetryActive(job)) return response.status(409).json({ message: 'Wait for product reclassification to finish.' });
   if (job.status !== 'review_required') return response.status(409).json({ success: false, code: 'PROCESS_NOT_READY', message: 'This report is not awaiting review.' });
   if (!values.length || values.length > 200) return response.status(422).json({ success: false, code: 'INVALID_BULK_REVIEW', message: 'Select between 1 and 200 unique values to update.' });
   const reviewItems = job.result?.classifications?.[kind === 'product' ? 'products' : 'statuses'] || [];
@@ -128,6 +155,13 @@ app.post('/api/report-processes/:processId/review/:kind/bulk', async (request, r
   const missingValue = values.find((value) => !reviewValues.has(value));
   if (missingValue) return response.status(404).json({ success: false, code: 'REVIEW_ITEM_NOT_FOUND', message: `Review item ${missingValue} could not be found.` });
   try {
+    if (kind === 'product') {
+      const approvals = Array.isArray(request.body?.decisions) ? request.body.decisions : values.map((value) => ({ value, ...request.body }));
+      for (const decision of approvals.filter((x) => x.action === 'approve')) {
+        const item = reviewItems.find((x) => x.value === decision.value);
+        if (item?.suggestionStatus !== 'AI Suggested' || item.suggestedMasterCategory !== decision.masterCategory || item.suggestedProductCategory !== decision.productCategory) throw Object.assign(new Error('Suggestion changed'), { code: 'INVALID_SUGGESTION' });
+      }
+    }
     let updates;
     if (kind === 'status') {
       const mappings = await mappingStore.saveMappings(clientId, 'status', values, request.body?.category);
@@ -151,6 +185,10 @@ app.post('/api/report-processes/:processId/review/:kind/bulk', async (request, r
       updates = mappings.map((mapping) => ({ value: mapping.originalExample, masterCategory: mapping.masterCategory, productCategory: mapping.productCategory, category: mapping.productCategory, mappingSource: source, suggestionStatus: source, status: source, classificationRequired: false, manualReason: null }));
       await mappingStore.decideSuggestions(clientId, values, source, { masterCategory: request.body?.masterCategory, productCategory: request.body?.productCategory });
     }
+    if (kind === 'product') {
+      const history = new Map((await mappingStore.listSuggestions(clientId, values.map(normalizeProductName))).map((x) => [x.normalizedProductName, x.history || []]));
+      updates.forEach((x) => { x.suggestionHistory = history.get(normalizeProductName(x.value)) || []; });
+    }
     const saved = await processingStore.updateReviews(clientId, job.processId, kind, updates);
     if (!saved) return response.status(409).json({ success: false, code: 'REVIEW_CONFLICT', message: 'This review changed in another window. Refresh and try again.' });
     console.info(JSON.stringify({ event: 'report_review_bulk_updated', processId: job.processId, kind, requested: values.length, updated: updates.length, processWrites: 1 }));
@@ -160,6 +198,7 @@ app.post('/api/report-processes/:processId/review/:kind/bulk', async (request, r
 app.post('/api/report-processes/:processId/review/:kind/:value', async (request, response) => {
   const kind = mappingKind(request.params.kind); const job = await processingStore.get(clientId, request.params.processId, { includeRows: false });
   if (!kind || !job) return response.status(404).json({ success: false, code: 'PROCESS_NOT_FOUND', message: 'This report process could not be found.' });
+  if (kind === 'product' && productRetryActive(job)) return response.status(409).json({ message: 'Wait for product reclassification to finish.' });
   if (job.status !== 'review_required') return response.status(409).json({ success: false, code: 'PROCESS_NOT_READY', message: 'This report is not awaiting review.' });
   try { const saved = await applyReviewDecision(job, kind, request.params.value, request.body); if (!saved) return response.status(404).json({ success: false, code: 'REVIEW_ITEM_NOT_FOUND', message: 'This review item could not be found.' }); return response.json({ success: true, process: processingStore.public(saved) });
   } catch (error) { return response.status(422).json({ success: false, code: error.code || 'INVALID_MAPPING', message: 'Select a valid category before saving.' }); }

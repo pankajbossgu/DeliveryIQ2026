@@ -1,15 +1,77 @@
+const crypto = require('node:crypto');
 const { normalizeMappingValue } = require('./classification');
-function normalizeProductName(value) { return normalizeMappingValue(value); }
-function normalizeCategory(value) { const text = String(value || '').trim().replace(/\s+/g, ' '); return text ? text.slice(0, 80) : null; }
-function validAiCategory(value) { const text = normalizeCategory(value); return text && !/[\u0000-\u001f\u007f<>]/.test(text) ? text : null; }
-function taxonomy(categories = [], masters = []) { const masterNames = masters.map((x) => typeof x === 'string' ? x : x.name).filter(Boolean); const products = categories.map((x) => typeof x === 'string' ? { name: x, masterCategory: null } : x).filter((x) => x.name); return { masterCategories: masterNames, productCategories: products }; }
-function classifyProducts(products, { mappings = [], categories = [], masterCategories = [], productCategories, suggestions = [], provider } = {}) {
-  const unique = new Map(); for (const value of products) { const originalProductName = String(value || '').trim(); const normalizedProductName = normalizeProductName(originalProductName); if (!normalizedProductName) continue; const item = unique.get(normalizedProductName) || { value: originalProductName, originalProductName, normalizedProductName, count: 0 }; item.count += 1; unique.set(normalizedProductName, item); }
-  const saved = new Map(mappings.map((m) => [m.normalizedValue || m.normalizedProductName, m])); const items = [...unique.values()].map((item) => { const mapping = saved.get(item.normalizedProductName); const productCategory = normalizeCategory(mapping?.productCategory || mapping?.category); const masterCategory = normalizeCategory(mapping?.masterCategory); return { ...item, category: productCategory, productCategory, masterCategory, confidence: productCategory ? 1 : null, mappingSource: productCategory ? 'client' : 'unmapped', classificationRequired: !productCategory }; });
-  const prior = new Map(suggestions.map((x) => [x.normalizedProductName, x])); const unknown = items.filter((x) => x.classificationRequired); const pending = unknown.filter((x) => !prior.has(x.normalizedProductName));
-  for (const item of unknown.filter((x) => prior.has(x.normalizedProductName))) { const s = prior.get(item.normalizedProductName); const pc = validAiCategory(s.suggestedProductCategory || s.suggestedCategory); const mc = validAiCategory(s.suggestedMasterCategory); if (s.status === 'AI Suggested' && pc && mc) Object.assign(item, { suggestedCategory: pc, suggestedProductCategory: pc, suggestedMasterCategory: mc, confidence: s.confidence ?? null, suggestionReason: s.reason || null, mappingSource: 'ai-suggested', classificationRequired: true, suggestionStatus: 'AI Suggested', model: s.model || null }); else Object.assign(item, { mappingSource: 'needs-review', classificationRequired: true, suggestionStatus: s.status, manualReason: 'AI could not confidently classify this product. Please assign categories manually.' }); }
-  if (!provider || !pending.length) return { providerUnavailable: false, items };
-  const current = taxonomy(productCategories || categories, masterCategories); const apply = (response) => { const responseByProduct = new Map((response.results || []).map((x) => [x.product, x])); for (const item of pending) { const s = responseByProduct.get(item.originalProductName); const productCategory = validAiCategory(s?.productCategory || s?.category); const masterCategory = validAiCategory(s?.masterCategory); if (productCategory && masterCategory && productCategory !== 'NO_MATCH') Object.assign(item, { suggestedCategory: productCategory, suggestedProductCategory: productCategory, suggestedMasterCategory: masterCategory, confidence: s.confidence ?? null, suggestionReason: s.reason || null, mappingSource: 'ai-suggested', classificationRequired: true, suggestionStatus: 'AI Suggested', model: response.model }); else Object.assign(item, { mappingSource: 'needs-review', suggestionStatus: 'Needs Review', classificationRequired: true, manualReason: 'AI could not confidently classify this product. Please assign categories manually.', model: response.model }); } return { providerUnavailable: Boolean(response.providerUnavailable), providerError: response.providerError || null, items }; };
-  const response = provider.classifyProducts(pending.map((x) => x.originalProductName), current); return response?.then ? response.then(apply) : apply(response);
+
+// Preserve existing mapping keys. Names unsupported by the legacy normalizer get
+// a separate identity so they cannot disappear or collide with ordinary names.
+function normalizeProductName(value) {
+  const raw = String(value ?? '').trim();
+  return normalizeMappingValue(raw) || (raw ? `raw:${crypto.createHash('sha256').update(raw.normalize('NFKC')).digest('hex')}` : '');
 }
-module.exports = { normalizeProductName, normalizeCategory, validAiCategory, classifyProducts };
+function normalizeCategory(value) { const text = String(value || '').trim().replace(/\s+/g, ' '); return text ? text.slice(0, 80) : null; }
+function validAiCategory(value) { return typeof value === 'string' && value.trim().length <= 80 && !/[\u0000-\u001f\u007f<>]/.test(value) ? normalizeCategory(value) : null; }
+function categoryKey(value) { return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase(); }
+function buildTaxonomy(productCategories = [], masterCategories = []) {
+  const masters = new Map(masterCategories.filter((x) => typeof x === 'string' || x.active !== false).map((x) => typeof x === 'string' ? x : x.name).filter(validAiCategory).map((name) => [categoryKey(name), name]));
+  const pairs = new Map();
+  for (const category of productCategories) {
+    if (!category || category.active === false || !validAiCategory(category.name)) continue;
+    const masterCategory = masters.get(categoryKey(category.masterCategory));
+    if (masterCategory) pairs.set(JSON.stringify([categoryKey(masterCategory), categoryKey(category.name)]), { name: category.name, masterCategory });
+  }
+  return { masterCategories: [...masters.values()], productCategories: [...pairs.values()] };
+}
+function matchTaxonomyPair(taxonomy, master, product) {
+  return taxonomy.productCategories.find((x) => categoryKey(x.masterCategory) === categoryKey(master) && categoryKey(x.name) === categoryKey(product)) || null;
+}
+function reviewState(item, status, reason) {
+  Object.assign(item, { suggestedCategory: null, suggestedProductCategory: null, suggestedMasterCategory: null, confidence: null, suggestionReason: null, mappingSource: 'needs-review', classificationRequired: true, suggestionStatus: status, manualReason: reason });
+}
+function classifyProducts(products, { mappings = [], categories = [], masterCategories = [], productCategories, suggestions = [], provider, retry = false } = {}) {
+  const current = buildTaxonomy(productCategories || categories, masterCategories);
+  const unique = new Map();
+  for (const value of products) {
+    const originalProductName = String(value ?? '').trim(); const normalizedProductName = normalizeProductName(originalProductName);
+    if (!originalProductName) continue;
+    const item = unique.get(normalizedProductName) || { value: originalProductName, originalProductName, normalizedProductName, manualOnly: !normalizeMappingValue(originalProductName), count: 0 };
+    item.count += 1; unique.set(normalizedProductName, item);
+  }
+  const saved = new Map(mappings.map((m) => [m.normalizedValue || m.normalizedProductName, m]));
+  const prior = new Map(suggestions.map((s) => [s.normalizedProductName, s])); const pending = [];
+  const items = [...unique.values()].map((item) => {
+    const mapping = saved.get(item.normalizedProductName);
+    const productCategory = normalizeCategory(mapping?.productCategory || mapping?.category);
+    Object.assign(item, { category: productCategory, productCategory, masterCategory: normalizeCategory(mapping?.masterCategory), confidence: productCategory ? 1 : null, mappingSource: productCategory ? 'client' : 'unmapped', classificationRequired: !productCategory });
+    if (productCategory) return item;
+    const previous = prior.get(item.normalizedProductName);
+    item.suggestionHistory = previous?.history || [];
+    if (item.manualOnly) { reviewState(item, 'Needs Review', 'This product name requires manual category selection. Its original name has been preserved.'); return item; }
+    if (!retry && previous?.status === 'Client Rejected') { reviewState(item, 'Client Rejected', 'You rejected the previous suggestion. Select categories manually or explicitly reclassify this product.'); return item; }
+    const pair = previous?.status === 'AI Suggested' && matchTaxonomyPair(current, previous.suggestedMasterCategory, previous.suggestedProductCategory || previous.suggestedCategory);
+    if (!retry && pair) {
+      Object.assign(item, { suggestedCategory: pair.name, suggestedProductCategory: pair.name, suggestedMasterCategory: pair.masterCategory, confidence: previous.confidence ?? null, suggestionReason: previous.reason || null, mappingSource: 'ai-suggested', suggestionStatus: 'AI Suggested', model: previous.model || null }); return item;
+    }
+    // Failed/legacy Needs Review and stale suggestions are eligible again. A
+    // genuine no-match can also be reconsidered against a changed taxonomy.
+    if (!current.productCategories.length) { reviewState(item, 'No Match', 'No suitable existing category is available. Select or create categories manually, then reclassify if needed.'); return item; }
+    pending.push(item); return item;
+  });
+  const apply = (response = {}) => {
+    const byProduct = new Map((response.results || []).map((x) => [x.product, x]));
+    for (const item of pending) {
+      const suggestion = byProduct.get(item.originalProductName);
+      const pair = suggestion && matchTaxonomyPair(current, suggestion.masterCategory, suggestion.productCategory || suggestion.category);
+      if (pair) Object.assign(item, { suggestedCategory: pair.name, suggestedProductCategory: pair.name, suggestedMasterCategory: pair.masterCategory, confidence: typeof suggestion.confidence === 'number' && Number.isFinite(suggestion.confidence) && suggestion.confidence >= 0 && suggestion.confidence <= 1 ? suggestion.confidence : null, suggestionReason: suggestion.reason || null, mappingSource: 'ai-suggested', suggestionStatus: 'AI Suggested', classificationRequired: true, manualReason: null });
+      else if (suggestion?.productCategory === 'NO_MATCH' || suggestion?.category === 'NO_MATCH') reviewState(item, 'No Match', 'No suitable existing category was found. Please select master and product categories manually.');
+      else reviewState(item, 'Failed', 'AI classification could not be completed. Retry or select categories manually.');
+      item.model = response.model || null;
+    }
+    return { providerUnavailable: Boolean(response.providerUnavailable) || items.some((x) => x.suggestionStatus === 'Failed'), providerError: response.providerError || null, items };
+  };
+  if (!pending.length) return { providerUnavailable: false, items };
+  if (!provider) return apply();
+  try {
+    const response = provider.classifyProducts(pending.map((x) => x.originalProductName), current);
+    return response?.then ? response.then(apply, () => apply({ providerUnavailable: true })) : apply(response);
+  } catch { return apply({ providerUnavailable: true }); }
+}
+module.exports = { normalizeProductName, normalizeCategory, validAiCategory, buildTaxonomy, matchTaxonomyPair, classifyProducts };

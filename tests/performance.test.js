@@ -73,7 +73,7 @@ test('Gemini receives only normalized unique unknown products after mappings and
     const names = JSON.parse(JSON.parse(options.body).contents[0].parts[0].text).products; calls.push(names);
     return { ok: true, status: 200, text: async () => JSON.stringify({ results: names.map((product) => ({ product, masterCategory: 'Beauty', productCategory: 'Serum' })) }) };
   } });
-  const result = await processValidatedUpload(input, { includeRows: false, productMappings: [{ normalizedValue: 'product 0', masterCategory: 'Beauty', productCategory: 'Saved' }], suggestions: [{ normalizedProductName: 'product 1', status: 'AI Suggested', suggestedMasterCategory: 'Beauty', suggestedProductCategory: 'Prior' }, { normalizedProductName: 'product 2', status: 'Client Rejected' }], productClassifier: provider });
+  const result = await processValidatedUpload(input, { includeRows: false, masterCategories: ['Beauty'], productCategories: [{ name: 'Serum', masterCategory: 'Beauty' }, { name: 'Prior', masterCategory: 'Beauty' }], productMappings: [{ normalizedValue: 'product 0', masterCategory: 'Beauty', productCategory: 'Saved' }], suggestions: [{ normalizedProductName: 'product 1', status: 'AI Suggested', suggestedMasterCategory: 'Beauty', suggestedProductCategory: 'Prior' }, { normalizedProductName: 'product 2', status: 'Client Rejected' }], productClassifier: provider });
   assert.deepEqual(calls, [['Product 3']]);
   assert.equal(result.classifications.products.length, 4);
   assert.equal(result.classifications.products.find((item) => item.normalizedProductName === 'product 0').productCategory, 'Saved');

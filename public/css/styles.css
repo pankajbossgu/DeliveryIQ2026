@@ -3638,3 +3638,17 @@ body.modal-open { overflow: hidden; }
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Product classification review states. */
+.classification-state { width: fit-content; padding: 4px 9px; border-radius: 6px; background: #eef2ff; color: #3348a0; font-size: 13px; }
+.classification-state.is-failed { background: #fff1ef; color: #a13025; }
+.taxonomy-hint { color: #426353; font-size: 12px; }
+.classification-loading { display: grid; gap: 10px; padding: 12px 0; min-width: 160px; }
+.classification-loading .mapping-skeleton-bar:nth-child(3) { width: 65%; }
+.classification-history { margin-top: 8px; font-size: 13px; }
+.classification-history summary, .approved-product-review > summary { cursor: pointer; font-weight: 600; }
+.classification-history ul { padding-left: 20px; overflow-wrap: anywhere; }
+.product-review-card .product-review-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.product-review-card .mapping-identity, .product-review-details { overflow-wrap: anywhere; }
+.approved-product-review { margin-top: 18px; }
+.approved-product-review > summary { margin-bottom: 12px; }

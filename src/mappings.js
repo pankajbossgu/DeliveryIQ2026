@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const { isReportCategory, normalizeMappingValue } = require('./classification');
-const { normalizeCategory } = require('./product');
+const { normalizeCategory, normalizeProductName } = require('./product');
 
 const mappingSchema = new mongoose.Schema({ clientId: { type: String, required: true }, normalizedValue: { type: String, required: true }, originalExample: { type: String, required: true }, category: String, productCategory: String, productCategoryId: mongoose.Schema.Types.ObjectId, masterCategory: String, masterCategoryId: mongoose.Schema.Types.ObjectId, source: { type: String, default: null }, updatedBy: { type: String, default: 'system' }, previousCategory: String, previousProductCategory: String, previousMasterCategory: String }, { timestamps: true, versionKey: false });
 mappingSchema.index({ clientId: 1, normalizedValue: 1 }, { unique: true });
@@ -13,9 +13,10 @@ const StatusMapping = mongoose.models.StatusMapping || mongoose.model('StatusMap
 const ProductMapping = mongoose.models.ProductMapping || mongoose.model('ProductMapping', mappingSchema, 'productMappings');
 const MasterCategory = mongoose.models.MasterCategory || mongoose.model('MasterCategory', masterSchema, 'masterCategories');
 const ProductCategory = mongoose.models.ProductCategory || mongoose.model('ProductCategory', categorySchema, 'productCategories');
-const suggestionSchema = new mongoose.Schema({ clientId: { type: String, required: true }, normalizedProductName: { type: String, required: true }, originalProductName: { type: String, required: true }, suggestedCategory: String, suggestedProductCategory: String, suggestedMasterCategory: String, confidence: Number, reason: String, model: String, status: { type: String, required: true }, finalCategory: String, finalProductCategory: String, finalMasterCategory: String, decidedAt: Date }, { timestamps: true, versionKey: false });
+const suggestionSchema = new mongoose.Schema({ clientId: { type: String, required: true }, normalizedProductName: { type: String, required: true }, originalProductName: { type: String, required: true }, suggestedCategory: String, suggestedProductCategory: String, suggestedMasterCategory: String, confidence: Number, reason: String, model: String, status: { type: String, required: true }, finalCategory: String, finalProductCategory: String, finalMasterCategory: String, decidedAt: Date, history: { type: [mongoose.Schema.Types.Mixed], default: [] } }, { timestamps: true, versionKey: false });
 suggestionSchema.index({ clientId: 1, normalizedProductName: 1, createdAt: -1 });
 const ProductClassificationSuggestion = mongoose.models.ProductClassificationSuggestion || mongoose.model('ProductClassificationSuggestion', suggestionSchema, 'productClassificationSuggestions');
+function suggestionSnapshot(item) { return Object.fromEntries(['status', 'suggestedMasterCategory', 'suggestedProductCategory', 'confidence', 'reason', 'model', 'finalMasterCategory', 'finalProductCategory', 'decidedAt', 'updatedAt'].filter((key) => item[key] !== undefined).map((key) => [key, item[key]])); }
 const duplicate = (code) => Object.assign(new Error(code), { code });
 
 class MappingStore {
@@ -29,15 +30,16 @@ class MappingStore {
   async renameMaster(clientId, idOrName, name) { const master = await this.master(clientId, idOrName); const next = normalizeCategory(name); if (!master) return null; if (!next) throw duplicate('INVALID_MASTER_CATEGORY'); const existing = await this.master(clientId, next); if (existing && String(existing._id) !== String(master._id)) throw duplicate('MASTER_CATEGORY_EXISTS'); if (await this.database()) return MasterCategory.findByIdAndUpdate(master._id, { name: next, normalizedName: normalizeMappingValue(next), updatedBy: 'client' }, { new: true }).lean(); master.name = next; master.normalizedName = normalizeMappingValue(next); return master; }
   async save(kind, clientId, originalExample, category, options = {}) {
     if (kind === 'product' && options.masterCategory) return this.saveProductMapping(clientId, originalExample, { productCategory: category, masterCategory: options.masterCategory, source: options.source, updatedBy: options.updatedBy });
-    if (kind === 'product') { const normalizedValue = normalizeMappingValue(originalExample); const update = { clientId, normalizedValue, originalExample: String(originalExample).trim(), category: normalizeCategory(category), productCategory: normalizeCategory(category), source: options.source || 'Manual', updatedBy: options.updatedBy || 'client' }; const values = this.memory.product.get(clientId) || new Map(); const saved = { ...values.get(normalizedValue), ...update, createdAt: values.get(normalizedValue)?.createdAt || new Date(), updatedAt: new Date() }; values.set(normalizedValue, saved); this.memory.product.set(clientId, values); return saved; }
+    if (kind === 'product') { const normalizedValue = normalizeProductName(originalExample); const update = { clientId, normalizedValue, originalExample: String(originalExample).trim(), category: normalizeCategory(category), productCategory: normalizeCategory(category), source: options.source || 'Manual', updatedBy: options.updatedBy || 'client' }; const values = this.memory.product.get(clientId) || new Map(); const saved = { ...values.get(normalizedValue), ...update, createdAt: values.get(normalizedValue)?.createdAt || new Date(), updatedAt: new Date() }; values.set(normalizedValue, saved); this.memory.product.set(clientId, values); return saved; }
     if (!isReportCategory(category)) throw duplicate('INVALID_CATEGORY'); const normalizedValue = normalizeMappingValue(originalExample); if (!clientId || !normalizedValue) throw duplicate('INVALID_MAPPING');
     const update = { clientId, normalizedValue, originalExample: String(originalExample).trim(), category, source: options.source || null, updatedBy: options.updatedBy || 'client' }; if (await this.database()) return StatusMapping.findOneAndUpdate({ clientId, normalizedValue }, update, { upsert: true, new: true }).lean(); const values = this.memory.status.get(clientId) || new Map(); const saved = { ...values.get(normalizedValue), ...update, createdAt: values.get(normalizedValue)?.createdAt || new Date(), updatedAt: new Date() }; values.set(normalizedValue, saved); this.memory.status.set(clientId, values); return saved;
   }
   async saveProductMapping(clientId, originalExample, { productCategory, masterCategory, source, updatedBy } = {}) {
-    const product = normalizeCategory(productCategory); if (!clientId || !normalizeMappingValue(originalExample) || !product) throw duplicate('INVALID_MAPPING');
+    const product = normalizeCategory(productCategory); if (!clientId || !normalizeProductName(originalExample) || !product) throw duplicate('INVALID_MAPPING');
     const category = await this.category(clientId, product, masterCategory); if (!category) throw duplicate('INVALID_CATEGORY');
     const master = await this.master(clientId, category.masterCategoryId); if (!master) throw duplicate('MASTER_CATEGORY_REQUIRED');
-    const normalizedValue = normalizeMappingValue(originalExample); const update = { clientId, normalizedValue, originalExample: String(originalExample).trim(), category: category.name, productCategory: category.name, productCategoryId: category._id, masterCategory: master.name, masterCategoryId: master._id, updatedBy: updatedBy || 'client' };
+    if (source === 'AI Approved' && (!master.active || !category.active)) throw duplicate('INVALID_CATEGORY');
+    const normalizedValue = normalizeProductName(originalExample); const update = { clientId, normalizedValue, originalExample: String(originalExample).trim(), category: category.name, productCategory: category.name, productCategoryId: category._id, masterCategory: master.name, masterCategoryId: master._id, updatedBy: updatedBy || 'client' };
     const sourceFor = (previous) => previous?.source === 'AI Approved' && previous.productCategory !== category.name ? 'Client Modified' : (source || previous?.source || 'Manual');
     if (await this.database()) { const previous = await ProductMapping.findOne({ clientId, normalizedValue }).lean(); return ProductMapping.findOneAndUpdate({ clientId, normalizedValue }, { ...update, source: sourceFor(previous), ...(previous?.productCategory !== category.name ? { previousCategory: previous?.category, previousProductCategory: previous?.productCategory, previousMasterCategory: previous?.masterCategory } : {}) }, { upsert: true, new: true }).lean(); }
     const values = this.memory.product.get(clientId) || new Map(); const previous = values.get(normalizedValue); const saved = { ...previous, ...update, source: sourceFor(previous), createdAt: previous?.createdAt || new Date(), updatedAt: new Date() }; values.set(normalizedValue, saved); this.memory.product.set(clientId, values); return saved;
@@ -51,9 +53,9 @@ class MappingStore {
     const product = normalizeCategory(productCategory);
     const master = taxonomy.masters.find((item) => String(item._id) === String(masterCategory) || item.normalizedName === normalizeMappingValue(masterCategory));
     const category = taxonomy.categories.find((item) => item.normalizedName === normalizeMappingValue(product) && String(item.masterCategoryId) === String(master?._id));
-    if (!master || !category) throw duplicate('INVALID_CATEGORY');
-    const now = new Date(); const normalized = values.map(normalizeMappingValue);
-    const update = (value) => ({ clientId, normalizedValue: normalizeMappingValue(value), originalExample: value, category: category.name, productCategory: category.name, productCategoryId: category._id, masterCategory: master.name, masterCategoryId: master._id, source: source || 'Manual', updatedBy: updatedBy || 'client' });
+    if (!master || !category || source === 'AI Approved' && (!master.active || !category.active)) throw duplicate('INVALID_CATEGORY');
+    const now = new Date(); const normalized = values.map(normalizeProductName);
+    const update = (value) => ({ clientId, normalizedValue: normalizeProductName(value), originalExample: value, category: category.name, productCategory: category.name, productCategoryId: category._id, masterCategory: master.name, masterCategoryId: master._id, source: source || 'Manual', updatedBy: updatedBy || 'client' });
     if (await this.database()) {
       const previous = await ProductMapping.find({ clientId, normalizedValue: { $in: normalized } }).lean(); const prior = new Map(previous.map((item) => [item.normalizedValue, item]));
       await ProductMapping.bulkWrite(values.map((value) => { const next = update(value); const old = prior.get(next.normalizedValue); next.source = old?.source === 'AI Approved' && old.productCategory !== category.name ? 'Client Modified' : (source || old?.source || 'Manual'); return { updateOne: { filter: { clientId, normalizedValue: next.normalizedValue }, update: { $set: { ...next, ...(old?.productCategory !== category.name ? { previousCategory: old?.category, previousProductCategory: old?.productCategory, previousMasterCategory: old?.masterCategory } : {}) }, $setOnInsert: { createdAt: now } }, upsert: true } }; }), { ordered: true });
@@ -70,16 +72,18 @@ class MappingStore {
     return unique.map((value) => ({ originalExample: value, normalizedValue: normalizeMappingValue(value), category }));
   }
   async decideSuggestions(clientId, products, status, details = {}) {
-    const values = [...new Set((products || []).map((value) => String(value || '').trim()).filter(Boolean))]; if (!values.length || !['Client Rejected', 'AI Approved', 'Client Modified', 'Manual'].includes(status)) throw duplicate('INVALID_SUGGESTION');
-    const update = { status, finalCategory: details.productCategory || details.finalCategory || null, finalProductCategory: details.productCategory || details.finalCategory || null, finalMasterCategory: details.masterCategory || null, decidedAt: new Date() };
-    if (await this.database()) return ProductClassificationSuggestion.updateMany({ clientId, normalizedProductName: { $in: values.map(normalizeMappingValue) } }, { $set: update });
-    const normalized = new Set(values.map(normalizeMappingValue));
-    (this.memory.suggestion.get(clientId) || []).filter((item) => normalized.has(item.normalizedProductName)).forEach((item) => Object.assign(item, update));
+    const keys = [...new Set((products || []).map(normalizeProductName).filter(Boolean))];
+    if (!keys.length || !['Client Rejected', 'AI Approved', 'Client Modified', 'Manual'].includes(status)) throw duplicate('INVALID_SUGGESTION');
+    const existing = await this.listSuggestions(clientId, keys); const now = new Date();
+    const update = { status, finalCategory: details.productCategory || details.finalCategory || null, finalProductCategory: details.productCategory || details.finalCategory || null, finalMasterCategory: details.masterCategory || null, decidedAt: now };
+    if (await this.database()) {
+      if (existing.length) await ProductClassificationSuggestion.bulkWrite(existing.map((old) => ({ updateOne: { filter: { _id: old._id, clientId }, update: { $set: update, ...(old.status !== status ? { $push: { history: suggestionSnapshot(old) } } : {}) } } })), { ordered: true });
+    } else for (const old of existing) { if (old.status !== status) old.history = [...(old.history || []), suggestionSnapshot(old)]; Object.assign(old, update, { updatedAt: now }); }
   }
   async listCategories(clientId, includeInactive = false, masters) { masters ||= await this.listMasters(clientId, true); const byId = new Map(masters.map((m) => [String(m._id), m])); const decorate = (x) => ({ ...x, masterCategory: byId.get(String(x.masterCategoryId))?.name || null }); if (await this.database()) return (await ProductCategory.find({ clientId, ...(includeInactive ? {} : { active: true }) }).sort({ name: 1 }).lean()).map(decorate); return [...(this.memory.category.get(clientId)?.values() || [])].filter((x) => includeInactive || x.active).map(decorate).sort((a, b) => a.name.localeCompare(b.name)); }
   async category(clientId, name, masterIdOrName) { const key = normalizeMappingValue(name); const categories = await this.listCategories(clientId, true); return categories.find((x) => x.normalizedName === key && (!masterIdOrName || String(x.masterCategoryId) === String(masterIdOrName) || normalizeMappingValue(x.masterCategory) === normalizeMappingValue(masterIdOrName))) || null; }
   async saveCategory(clientId, name, masterCategory, options = {}) { const value = normalizeCategory(name); const master = await this.master(clientId, masterCategory); if (!value) throw duplicate('INVALID_CATEGORY'); const normalizedName = normalizeMappingValue(value); if (!master) { if (options.requireMaster) throw duplicate('MASTER_CATEGORY_REQUIRED'); const values = this.memory.category.get(clientId) || new Map(); if (values.has(`legacy:${normalizedName}`)) throw duplicate('CATEGORY_EXISTS'); const saved = { clientId, name: value, normalizedName, active: true, _id: `legacy-${normalizedName}`, createdAt: new Date(), updatedAt: new Date() }; values.set(`legacy:${normalizedName}`, saved); this.memory.category.set(clientId, values); return saved; } const record = { clientId, name: value, normalizedName, masterCategoryId: master._id, active: options.active !== false, updatedBy: options.updatedBy || 'client' }; if (await this.database()) { if (await ProductCategory.exists({ clientId, masterCategoryId: master._id, normalizedName })) throw duplicate('CATEGORY_EXISTS'); try { return { ...(await ProductCategory.create(record)).toObject(), masterCategory: master.name }; } catch (e) { if (e.code === 11000) throw duplicate('CATEGORY_EXISTS'); throw e; } } const values = this.memory.category.get(clientId) || new Map(); const key = `${master._id}:${normalizedName}`; if (values.has(key)) throw duplicate('CATEGORY_EXISTS'); const saved = { ...record, _id: `category-${key}`, createdAt: new Date(), updatedAt: new Date(), masterCategory: master.name }; values.set(key, saved); this.memory.category.set(clientId, values); return saved; }
-  async remove(kind, clientId, value) { const key = normalizeMappingValue(value); const Model = kind === 'status' ? StatusMapping : ProductMapping; if (await this.database()) return Boolean((await Model.deleteOne({ clientId, normalizedValue: key })).deletedCount); return this.memory[kind].get(clientId)?.delete(key) || false; }
+  async remove(kind, clientId, value) { const key = kind === 'product' ? normalizeProductName(value) : normalizeMappingValue(value); const Model = kind === 'status' ? StatusMapping : ProductMapping; if (await this.database()) return Boolean((await Model.deleteOne({ clientId, normalizedValue: key })).deletedCount); return this.memory[kind].get(clientId)?.delete(key) || false; }
   async setCategoryActive(clientId, name, active, masterCategory) { const category = await this.category(clientId, name, masterCategory); if (!category) return null; if (await this.database()) return ProductCategory.findByIdAndUpdate(category._id, { active: Boolean(active), updatedBy: 'client' }, { new: true }).lean(); category.active = Boolean(active); category.updatedAt = new Date(); return category; }
   async renameCategory(clientId, oldName, name, masterCategory) { const category = await this.category(clientId, oldName, masterCategory); const next = normalizeCategory(name); if (!category) return null; if (!next) throw duplicate('INVALID_CATEGORY'); const existing = await this.category(clientId, next, category.masterCategoryId); if (existing && String(existing._id) !== String(category._id)) throw duplicate('CATEGORY_EXISTS'); if (await this.database()) { await ProductCategory.findByIdAndUpdate(category._id, { name: next, normalizedName: normalizeMappingValue(next), updatedBy: 'client' }); await ProductMapping.updateMany({ clientId, productCategoryId: category._id }, { productCategory: next, category: next, previousProductCategory: category.name }); return { ...category, name: next, normalizedName: normalizeMappingValue(next) }; } category.name = next; category.normalizedName = normalizeMappingValue(next); for (const map of this.memory.product.get(clientId)?.values() || []) if (String(map.productCategoryId) === String(category._id)) { map.category = next; map.productCategory = next; } return category; }
   async taxonomySnapshot(clientId) {
@@ -88,7 +92,7 @@ class MappingStore {
   }
   async classificationContext(clientId, rows) {
     const statusKeys = [...new Set(rows.map((row) => normalizeMappingValue(row.originalStatus)))];
-    const productKeys = [...new Set(rows.map((row) => row.normalizedProductName))];
+    const productKeys = [...new Set(rows.map((row) => normalizeProductName(row.originalProductName)))];
     const read = async (keys, load) => {
       const result = [];
       for (let offset = 0; offset < keys.length; offset += 1000) result.push(...await load(keys.slice(offset, offset + 1000)));
@@ -101,27 +105,40 @@ class MappingStore {
     ]);
     return { statusMappings, productMappings, suggestions, masterCategories: taxonomy.masters.filter((item) => item.active), productCategories: taxonomy.categories.filter((item) => item.active) };
   }
-  async saveSuggestions(clientId, products) {
-    const records = products.filter((x) => x.mappingSource === 'ai-suggested' || x.mappingSource === 'needs-review').map((x) => ({ clientId, normalizedProductName: x.normalizedProductName, originalProductName: x.originalProductName, suggestedCategory: x.suggestedProductCategory || null, suggestedProductCategory: x.suggestedProductCategory || null, suggestedMasterCategory: x.suggestedMasterCategory || null, confidence: x.confidence ?? null, reason: x.suggestionReason || null, model: x.model || null, status: x.suggestionStatus || 'Needs Review' }));
-    if (!records.length) return records;
-    if (await this.database()) {
-      for (let offset = 0; offset < records.length; offset += 500) {
-        await ProductClassificationSuggestion.bulkWrite(records.slice(offset, offset + 500).map((record) => ({ updateOne: { filter: { clientId, normalizedProductName: record.normalizedProductName }, update: { $setOnInsert: record }, upsert: true } })), { ordered: true });
+  async saveSuggestions(clientId, products, { retry = false } = {}) {
+    const pending = products.filter((x) => x.mappingSource === 'ai-suggested' || x.mappingSource === 'needs-review');
+    const saved = [];
+    for (let offset = 0; offset < pending.length; offset += 500) {
+      const batch = pending.slice(offset, offset + 500);
+      const previous = new Map((await this.listSuggestions(clientId, batch.map((x) => x.normalizedProductName))).map((x) => [x.normalizedProductName, x]));
+      const writes = []; const memory = this.memory.suggestion.get(clientId) || [];
+      for (const item of batch) {
+        const old = previous.get(item.normalizedProductName);
+        const record = { clientId, normalizedProductName: item.normalizedProductName, originalProductName: item.originalProductName, suggestedCategory: item.suggestedProductCategory || null, suggestedProductCategory: item.suggestedProductCategory || null, suggestedMasterCategory: item.suggestedMasterCategory || null, confidence: item.confidence ?? null, reason: item.suggestionReason || null, model: item.model || null, status: item.suggestionStatus || 'Needs Review' };
+        // Never overwrite a client's rejection during ordinary reuse.
+        if (old?.status === 'Client Rejected' && !retry) { item.suggestionHistory = old.history || []; saved.push(old); continue; }
+        const changed = old && ['status', 'suggestedProductCategory', 'suggestedMasterCategory', 'model'].some((key) => (old[key] || null) !== (record[key] || null));
+        const history = [...(old?.history || []), ...(changed || retry && old ? [suggestionSnapshot(old)] : [])];
+        item.suggestionHistory = history;
+        const next = { ...record, history, ...(changed || retry ? { finalCategory: null, finalProductCategory: null, finalMasterCategory: null, decidedAt: null } : {}) };
+        writes.push({ updateOne: { filter: old?._id ? { _id: old._id, clientId } : { clientId, normalizedProductName: item.normalizedProductName }, update: { $set: next }, upsert: true } });
+        if (old) Object.assign(old, next, { updatedAt: new Date() });
+        else memory.push({ ...next, createdAt: new Date(), updatedAt: new Date() });
+        saved.push(next);
       }
-    } else {
-      const values = this.memory.suggestion.get(clientId) || [];
-      const known = new Set(values.map((item) => item.normalizedProductName));
-      for (const record of records) if (!known.has(record.normalizedProductName)) { values.push({ ...record, createdAt: new Date(), updatedAt: new Date() }); known.add(record.normalizedProductName); }
-      this.memory.suggestion.set(clientId, values);
+      if (await this.database()) { if (writes.length) await ProductClassificationSuggestion.bulkWrite(writes, { ordered: true }); }
+      else this.memory.suggestion.set(clientId, memory);
     }
-    return records;
+    return saved;
   }
   async listSuggestions(clientId, keys) {
     if (await this.database()) return ProductClassificationSuggestion.aggregate([{ $match: { clientId, ...(keys ? { normalizedProductName: { $in: keys } } : {}) } }, { $sort: { createdAt: -1 } }, { $group: { _id: '$normalizedProductName', item: { $first: '$$ROOT' } } }, { $replaceRoot: { newRoot: '$item' } }]);
     const wanted = keys && new Set(keys);
     return (this.memory.suggestion.get(clientId) || []).filter((item) => !wanted || wanted.has(item.normalizedProductName));
   }
-  async decideSuggestion(clientId, product, status, details = {}) { const key = normalizeMappingValue(product); if (!key || !['Client Rejected', 'AI Approved', 'Client Modified', 'Manual'].includes(status)) throw duplicate('INVALID_SUGGESTION'); const update = { status, finalCategory: details.productCategory || details.finalCategory || null, finalProductCategory: details.productCategory || details.finalCategory || null, finalMasterCategory: details.masterCategory || null, decidedAt: new Date() }; if (await this.database()) return ProductClassificationSuggestion.findOneAndUpdate({ clientId, normalizedProductName: key }, update, { sort: { createdAt: -1 }, new: true }).lean(); const x = (this.memory.suggestion.get(clientId) || []).find((i) => i.normalizedProductName === key); return x && Object.assign(x, update);
+  async decideSuggestion(clientId, product, status, details = {}) {
+    await this.decideSuggestions(clientId, [product], status, details);
+    return (await this.listSuggestions(clientId, [normalizeProductName(product)]))[0] || null;
   }
 }
 module.exports = { MappingStore, MasterCategory, ProductCategory, ProductMapping };
