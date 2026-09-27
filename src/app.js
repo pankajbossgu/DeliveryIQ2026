@@ -8,7 +8,7 @@ const { validateUpload, processValidatedUpload, MAX_SOURCE_ROWS, MAX_FILE_SIZE, 
 const { REPORT_CATEGORIES } = require('./classification');
 const { MappingStore } = require('./mappings');
 const { ReportStore, ProcessingStore, csv: reportCsv, csvLine, universalExportRows, UNIVERSAL_EXPORT_HEADERS } = require('./reports');
-const { GeminiProductClassifier } = require('./product-classifier');
+const { GeminiProductClassifier, BATCH_SIZE } = require('./product-classifier');
 const { classifyProducts, normalizeProductName } = require('./product');
 
 const app = express(); const publicDirectory = path.join(__dirname, '..', 'public'); const mappingStore = new MappingStore(); const reportStore = new ReportStore(); const processingStore = new ProcessingStore();
@@ -126,18 +126,26 @@ function productRetryActive(job) { return new Date(job?.productRetry?.expiresAt 
 app.post('/api/report-processes/:processId/products/retry', universalRoute(async (request, response) => {
   const job = await processingStore.get(clientId, request.params.processId, { includeRows: false });
   if (!job) return response.status(404).json({ message: 'Report process not found.' });
-  const item = job.result?.classifications?.products.find((x) => x.value === request.body?.value);
-  if (job.status !== 'review_required' || !item?.classificationRequired || item.manualOnly) return response.status(409).json({ message: 'This product requires manual assignment or is already resolved.' });
-  const claim = await processingStore.claimProductRetry(clientId, job.processId, item.value);
+  const bulk = request.body?.values !== undefined;
+  if (bulk && (!Array.isArray(request.body.values) || !request.body.values.length || request.body.values.length > BATCH_SIZE || request.body.values.some((value) => typeof value !== 'string' || !value.trim()))) return response.status(422).json({ message: `Select between 1 and ${BATCH_SIZE} products per retry batch.` });
+  const values = new Set(bulk ? request.body.values : [request.body?.value]);
+  const eligible = (product) => values.has(product.value) && product.classificationRequired && !product.manualOnly && (!bulk || product.suggestionStatus === 'Failed');
+  let items = (job.result?.classifications?.products || []).filter(eligible);
+  if (job.status !== 'review_required' || !bulk && !items.length) return response.status(409).json({ message: 'This product requires manual assignment or is already resolved.' });
+  const claim = await processingStore.claimProductRetry(clientId, job.processId, items[0]?.value || 'bulk');
   if (!claim) return response.status(409).json({ message: 'Another product is being reclassified. Please wait, then retry.' });
   try {
-    const context = await mappingStore.classificationContext(clientId, [{ originalProductName: item.value, originalStatus: '' }]);
-    const result = await classifyProducts([item.value], { ...context, mappings: context.productMappings, provider: productClassifier, retry: true });
+    // Recheck current statuses after acquiring the existing review lease.
+    const current = await processingStore.get(clientId, job.processId, { includeRows: false });
+    items = (current?.result?.classifications?.products || []).filter(eligible);
+    const context = await mappingStore.classificationContext(clientId, items.map((item) => ({ originalProductName: item.value, originalStatus: '' })));
+    const result = await classifyProducts(items.map((item) => item.value), { ...context, mappings: context.productMappings, provider: productClassifier, retry: true });
     const latest = await processingStore.get(clientId, job.processId, { includeRows: false });
     if (latest?.status !== 'review_required' || latest.productRetry?.token !== claim.token || !productRetryActive(latest)) return response.status(409).json({ message: 'This review changed. Reload to see its current state.' });
-    const update = { ...result.items[0], count: item.count, status: result.items[0].suggestionStatus || 'Approved' };
-    await mappingStore.saveSuggestions(clientId, [update], { retry: true });
-    const saved = await processingStore.updateReview(clientId, job.processId, 'product', item.value, update);
+    const counts = new Map(items.map((item) => [item.value, item.count]));
+    const updates = result.items.map((item) => ({ ...item, count: counts.get(item.value), status: item.suggestionStatus || 'Approved' }));
+    await mappingStore.saveSuggestions(clientId, updates, { retry: true });
+    const saved = updates.length ? await processingStore.updateReviews(clientId, job.processId, 'product', updates) : latest;
     if (!saved) return response.status(409).json({ message: 'This review changed. Reload before retrying.' });
     await processingStore.releaseProductRetry(clientId, job.processId, claim.token);
     return response.json({ success: true, process: processingStore.public(await processingStore.get(clientId, job.processId, { includeRows: false })) });
