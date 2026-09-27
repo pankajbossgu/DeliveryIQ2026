@@ -112,6 +112,28 @@ test('universal sync groups product rows, keeps occurrences immutable, and is id
   await store.syncCompletedReport('a', universalReport('a', 'R2', '2026-02-02T00:00:00Z'), [universalRow('Order 1')]);
   assert.equal(store.occurrences.size, 2);
 });
+test('Mongo universal sync writes 20,000 orders in 1,000-order batches', async () => {
+  const occurrenceBatchSizes = []; const orderBatchSizes = []; const bulkOptions = [];
+  const originals = { syncFindOne: UniversalSync.findOne, syncUpdateOne: UniversalSync.updateOne, syncFindOneAndUpdate: UniversalSync.findOneAndUpdate, occurrenceBulkWrite: UniversalOrderOccurrence.bulkWrite, orderBulkWrite: UniversalOrder.bulkWrite };
+  UniversalSync.findOne = () => ({ lean: async () => null });
+  UniversalSync.updateOne = async () => ({});
+  UniversalSync.findOneAndUpdate = (_filter, update) => ({ lean: async () => update.$set });
+  UniversalOrderOccurrence.bulkWrite = async (operations, options) => { occurrenceBatchSizes.push(operations.length); bulkOptions.push(options); return { upsertedCount: operations.length }; };
+  UniversalOrder.bulkWrite = async (operations, options) => { orderBatchSizes.push(operations.length); bulkOptions.push(options); return orderBatchSizes.length % 2 ? { upsertedCount: operations.length } : { modifiedCount: 0 }; };
+  try {
+    const report = universalReport('a', 'R-batches', '2026-02-01T00:00:00Z');
+    const rows = Array.from({ length: 20000 }, (_, index) => universalRow(`ORD-${index}`));
+    const result = await new UniversalStore({ mongoUri: null }).syncMongo('a', report, rows, { ordersProcessed: 0, occurrencesCreated: 0, ordersInserted: 0, ordersUpdated: 0, skippedDuplicateObservations: 0 });
+    assert.equal(result.status, 'completed');
+    assert.equal(result.counts.ordersProcessed, 20000);
+    assert.deepEqual(occurrenceBatchSizes, Array(20).fill(1000));
+    assert.deepEqual(orderBatchSizes, Array(40).fill(1000));
+    assert.ok(bulkOptions.every((options) => options.ordered === false));
+  } finally {
+    UniversalSync.findOne = originals.syncFindOne; UniversalSync.updateOne = originals.syncUpdateOne; UniversalSync.findOneAndUpdate = originals.syncFindOneAndUpdate;
+    UniversalOrderOccurrence.bulkWrite = originals.occurrenceBulkWrite; UniversalOrder.bulkWrite = originals.orderBulkWrite;
+  }
+});
 test('concurrent completed-report synchronization creates one occurrence per canonical order', async () => {
   const store = new UniversalStore({ mongoUri: null }); const report = universalReport('a', 'R-concurrent', '2026-02-01T00:00:00Z');
   await Promise.all(Array.from({ length: 8 }, () => store.syncCompletedReport('a', report, [universalRow(' Order 1 ', '2026-01-01', 'One'), universalRow('Order 1', '2026-01-01', 'Two')])));
