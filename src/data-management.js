@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+const crypto = require('node:crypto');
 const { Report, ReportRow, ReportPayload, ReportProcess, UniversalOrder, UniversalOrderOccurrence, UniversalSync } = require('./reports');
 const { ProductMapping, ProductClassificationSuggestion } = require('./mappings');
 
@@ -8,6 +8,8 @@ const FILTERS = {
   'ai-suggestions': new Set(['productSearch', 'status', 'masterCategory', 'productCategory'])
 };
 function failure(message, code = 'INVALID_DATA_FILTERS', status = 422) { return Object.assign(new Error(message), { code, status }); }
+function fingerprint(values) { return crypto.createHash('sha256').update([...values].map(String).sort().join('\n')).digest('hex'); }
+function stalePreview() { return failure('The matching data changed after preview. Preview again before deleting.', 'PREVIEW_STALE', 409); }
 function cleanFilters(scope, input = {}) {
   const allowed = FILTERS[scope];
   if (!allowed) throw failure('Choose a supported data type.', 'INVALID_DATA_SCOPE');
@@ -118,27 +120,29 @@ class DataManagementService {
         const all = ids.flatMap((id) => this.reportStore.rows.get(id) || []);
         rows = all.length; orders = new Set(all.map(canonicalOrder).filter(Boolean)).size;
       }
-      return { scope, filters, counts: { reports: reports.length, rows, uniqueOrders: orders }, sampleFiles: reports.slice(0, 8).map((item) => item.sourceFileName || item.reportId), warning: 'Deletes entire matching reports and their derived Universal Report records, not only rows matching the category filter.' };
+      return { scope, filters, counts: { reports: reports.length, rows, uniqueOrders: orders }, selectionFingerprint: fingerprint(ids), sampleFiles: reports.slice(0, 8).map((item) => item.sourceFileName || item.reportId), warning: 'Deletes entire matching reports and their derived Universal Report records, not only rows matching the category filter.' };
     }
     if (scope === 'product-mappings') {
       const database = await this.mappingStore.database(); const query = mappingQuery(clientId, filters);
-      const count = database ? await ProductMapping.countDocuments(query) : [...(this.mappingStore.memory.product.get(clientId)?.values() || [])].filter((item) => mappingMatches(item, filters)).length;
-      return { scope, filters, counts: { mappings: count }, warning: 'Deletes only matching product-to-category mappings. Uploaded reports and historical analytics remain unchanged.' };
+      const selected = database ? await ProductMapping.find(query).select({ _id: 1 }).lean() : [...(this.mappingStore.memory.product.get(clientId)?.entries() || [])].filter(([, item]) => mappingMatches(item, filters)).map(([key]) => ({ _id: key }));
+      return { scope, filters, counts: { mappings: selected.length }, selectionFingerprint: fingerprint(selected.map((item) => item._id)), warning: 'Deletes only matching product-to-category mappings. Uploaded reports and historical analytics remain unchanged.' };
     }
     const database = await this.mappingStore.database(); const query = suggestionQuery(clientId, filters);
-    const count = database ? await ProductClassificationSuggestion.countDocuments(query) : (this.mappingStore.memory.suggestion.get(clientId) || []).filter((item) => suggestionMatches(item, filters)).length;
-    return { scope, filters, counts: { suggestions: count }, warning: 'Deletes only saved AI classification review suggestions. Product mappings, taxonomy, and uploaded reports remain unchanged.' };
+    const selected = database ? await ProductClassificationSuggestion.find(query).select({ _id: 1 }).lean() : (this.mappingStore.memory.suggestion.get(clientId) || []).filter((item) => suggestionMatches(item, filters)).map((item) => ({ _id: item._id || [item.normalizedProductName, item.status, item.updatedAt || item.createdAt].join('|') }));
+    return { scope, filters, counts: { suggestions: selected.length }, selectionFingerprint: fingerprint(selected.map((item) => item._id)), warning: 'Deletes only saved AI classification review suggestions. Product mappings, taxonomy, and uploaded reports remain unchanged.' };
   }
-  async delete(clientId, scope, input = {}) {
+  async delete(clientId, scope, input = {}, expectedFingerprint) {
     const filters = cleanFilters(scope, input);
-    if (scope === 'reports') return this.deleteReports(clientId, filters);
-    if (scope === 'product-mappings') return this.deleteMappings(clientId, filters);
-    if (scope === 'ai-suggestions') return this.deleteSuggestions(clientId, filters);
+    if (typeof expectedFingerprint !== 'string' || !expectedFingerprint) throw failure('Preview the selected data before deleting.', 'PREVIEW_REQUIRED', 409);
+    if (scope === 'reports') return this.deleteReports(clientId, filters, expectedFingerprint);
+    if (scope === 'product-mappings') return this.deleteMappings(clientId, filters, expectedFingerprint);
+    if (scope === 'ai-suggestions') return this.deleteSuggestions(clientId, filters, expectedFingerprint);
     throw failure('Choose a supported data type.', 'INVALID_DATA_SCOPE');
   }
-  async deleteReports(clientId, filters) {
+  async deleteReports(clientId, filters, expectedFingerprint) {
     const database = await this.reportStore.database(); const reports = await this.reportList(clientId, filters, database);
     const ids = reports.map((item) => item.reportId);
+    if (fingerprint(ids) !== expectedFingerprint) throw stalePreview();
     if (!ids.length) return { scope: 'reports', deleted: { reports: 0, rows: 0, occurrences: 0, currentOrders: 0 } };
     let rowsDeleted = 0; let occurrencesDeleted = 0; let currentOrdersRebuilt = 0;
     if (database) {
@@ -219,17 +223,31 @@ class DataManagementService {
     }
     return canonicalIds.length;
   }
-  async deleteMappings(clientId, filters) {
-    if (await this.mappingStore.database()) return { scope: 'product-mappings', deleted: { mappings: (await ProductMapping.deleteMany(mappingQuery(clientId, filters))).deletedCount || 0 } };
-    const values = this.mappingStore.memory.product.get(clientId); let count = 0;
-    if (values) for (const [key, item] of values) if (mappingMatches(item, filters)) { values.delete(key); count += 1; }
-    return { scope: 'product-mappings', deleted: { mappings: count } };
+  async deleteMappings(clientId, filters, expectedFingerprint) {
+    if (await this.mappingStore.database()) {
+      const selected = await ProductMapping.find(mappingQuery(clientId, filters)).select({ _id: 1 }).lean();
+      if (fingerprint(selected.map((item) => item._id)) !== expectedFingerprint) throw stalePreview();
+      const ids = selected.map((item) => item._id);
+      return { scope: 'product-mappings', deleted: { mappings: ids.length ? (await ProductMapping.deleteMany({ clientId, _id: { $in: ids } })).deletedCount || 0 : 0 } };
+    }
+    const values = this.mappingStore.memory.product.get(clientId); const selected = values ? [...values.entries()].filter(([, item]) => mappingMatches(item, filters)) : [];
+    if (fingerprint(selected.map(([key]) => key)) !== expectedFingerprint) throw stalePreview();
+    for (const [key] of selected) values.delete(key);
+    return { scope: 'product-mappings', deleted: { mappings: selected.length } };
   }
-  async deleteSuggestions(clientId, filters) {
-    if (await this.mappingStore.database()) return { scope: 'ai-suggestions', deleted: { suggestions: (await ProductClassificationSuggestion.deleteMany(suggestionQuery(clientId, filters))).deletedCount || 0 } };
-    const values = this.mappingStore.memory.suggestion.get(clientId) || []; const remaining = values.filter((item) => !suggestionMatches(item, filters));
-    const count = values.length - remaining.length; this.mappingStore.memory.suggestion.set(clientId, remaining);
-    return { scope: 'ai-suggestions', deleted: { suggestions: count } };
+  async deleteSuggestions(clientId, filters, expectedFingerprint) {
+    if (await this.mappingStore.database()) {
+      const selected = await ProductClassificationSuggestion.find(suggestionQuery(clientId, filters)).select({ _id: 1 }).lean();
+      if (fingerprint(selected.map((item) => item._id)) !== expectedFingerprint) throw stalePreview();
+      const ids = selected.map((item) => item._id);
+      return { scope: 'ai-suggestions', deleted: { suggestions: ids.length ? (await ProductClassificationSuggestion.deleteMany({ clientId, _id: { $in: ids } })).deletedCount || 0 : 0 } };
+    }
+    const values = this.mappingStore.memory.suggestion.get(clientId) || []; const selected = values.filter((item) => suggestionMatches(item, filters));
+    const keys = selected.map((item) => item._id || [item.normalizedProductName, item.status, item.updatedAt || item.createdAt].join('|'));
+    if (fingerprint(keys) !== expectedFingerprint) throw stalePreview();
+    const selectedSet = new Set(selected); const remaining = values.filter((item) => !selectedSet.has(item));
+    this.mappingStore.memory.suggestion.set(clientId, remaining);
+    return { scope: 'ai-suggestions', deleted: { suggestions: selected.length } };
   }
 }
 module.exports = { DataManagementService, cleanFilters };
