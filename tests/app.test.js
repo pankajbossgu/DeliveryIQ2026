@@ -595,7 +595,7 @@ test('Upload Data offers only Full Report and Universal Report offers one CSV ex
   assert.match(script, /function renderUploadTemplate\(/);
   assert.match(script, /exportType: 'full', format: 'csv'/);
   assert.match(script, /deliveryiq-full-report\.csv/);
-  assert.doesNotMatch(script, /data-export|universal-export-menu|function selectReportType\\(/);
+  assert.doesNotMatch(script, /data-export|universal-export-menu/); assert.equal(script.includes('function selectReportType('), false);
   assert.match(script, /function renderProcessing\\(process\\)/);
   assert.match(script, /current-process-status/);
   assert.match(script, /Create a new master category/);
