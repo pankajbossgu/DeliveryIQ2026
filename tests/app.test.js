@@ -589,11 +589,11 @@ test('Upload Data offers only Full Report and Universal Report offers one CSV ex
   assert.doesNotMatch(universalSection, /data-export=|Summary Report|Excel report|universal-export-menu/);
   assert.match(universalSection, /id="universal-export"[^>]*>Download Full Report CSV/);
   assert.match(script, /selectedReportType: 'full'/);
-  assert.match(script, /const REPORT_TEMPLATES = \\{ full:/);
-  assert.match(script, /function renderSelectedTemplates\\(\\)/);
-  assert.match(script, /function renderUploadTemplate\\(/);
+  assert.match(script, /const REPORT_TEMPLATES = \{ full:/);
+  assert.match(script, /function renderSelectedTemplates\(\)/);
+  assert.match(script, /function renderUploadTemplate\(/);
   assert.match(script, /exportType: 'full', format: 'csv'/);
-  assert.match(script, /deliveryiq-full-report\\.csv/);
+  assert.match(script, /deliveryiq-full-report\.csv/);
   assert.doesNotMatch(script, /data-export|universal-export-menu|function selectReportType\\(/);
   assert.match(script, /function renderProcessing\\(process\\)/);
   assert.match(script, /current-process-status/);
