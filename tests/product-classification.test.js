@@ -8,7 +8,7 @@ const { validateUpload, processValidatedUpload } = require('../src/upload');
 const taxonomy = { masterCategories: ['Beauty', 'Home'], productCategories: [{ name: 'Serum', masterCategory: 'Beauty' }, { name: 'Towel', masterCategory: 'Home' }] };
 const answer = (product, extra = {}) => ({ product, masterCategory: 'Beauty', productCategory: 'Serum', confidence: .9, ...extra });
 const response = (results) => ({ ok: true, status: 200, text: async () => JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ results }) }] } }] }) });
-const csvInput = (names) => validateUpload({ originalname: 'synthetic.csv', buffer: Buffer.from('Order ID,Order Date,Order Status,Product Name,Payment Mode\n' + names.map((name, i) => `${i},2026-01-01,Delivered,${name},COD`).join('\n')) }, { classify: false, templateType: 'simple' });
+const csvInput = (names) => validateUpload({ originalname: 'synthetic.csv', buffer: Buffer.from('Order ID,Order Date,Order Status,Product Name,Product Qty,Product Price,Payment Mode,Courier,Source/Website/Store\n' + names.map((name, i) => `${i},2026-01-01,Delivered,${name},1,10,COD,Test Courier,Test Store`).join('\n')) }, { classify: false, templateType: 'full' });
 
 test('request uses tenant taxonomy and permits new category names in the structured response', async () => {
   let captured;
@@ -241,8 +241,8 @@ test('HTTP review retries, rejects with history, approves existing categories an
     await api('/api/mappings/product', { product: 'Known', masterCategory: 'Beauty', productCategory: 'Serum', source: 'Manual' });
     const names = ['Known', 'Suggested', 'Mystery', 'Fail', '商品', 'Rejected'];
     const upload = async () => {
-      const body = Buffer.from('Order ID,Order Date,Order Status,Product Name,Payment Mode\n' + names.map((name, i) => `${i},2026-01-01,Delivered,${name},COD`).join('\n'));
-      const r = await actualFetch(base + '/api/uploads/validate', { method: 'POST', headers: { cookie, 'content-type': 'application/octet-stream', 'x-template-type': 'simple', 'x-file-name': 'synthetic.csv' }, body }); return r.json();
+      const body = Buffer.from('Order ID,Order Date,Order Status,Product Name,Product Qty,Product Price,Payment Mode,Courier,Source/Website/Store\n' + names.map((name, i) => `${i},2026-01-01,Delivered,${name},1,10,COD,Test Courier,Test Store`).join('\n'));
+      const r = await actualFetch(base + '/api/uploads/validate', { method: 'POST', headers: { cookie, 'content-type': 'application/octet-stream', 'x-template-type': 'full', 'x-file-name': 'synthetic.csv' }, body }); return r.json();
     };
     const initial = await upload(); const id = initial.process.processId;
     const review = `/api/report-processes/${id}/review/product`;
