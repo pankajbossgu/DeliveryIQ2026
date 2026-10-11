@@ -35,6 +35,30 @@ test('upload workflow checkpoint follows the processing stage machine', () => {
   assert.equal(context.processingStageIndex('finalizing_report'), 6);
 });
 
+test('data cleanup API requires a fresh preview and explicit typed confirmation', async () => {
+  const app = require('../src/app');
+  const server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)); });
+  const base = 'http://127.0.0.1:' + server.address().port;
+  try {
+    const previewResponse = await authenticatedFetch(base, '/api/settings/data/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: 'reports', filters: { sourceFileName: 'not-a-real-upload' } }) });
+    assert.equal(previewResponse.status, 200);
+    const preview = await previewResponse.json();
+    assert.equal(preview.success, true);
+    assert.equal(preview.preview.counts.reports, 0);
+    assert.ok(preview.previewToken);
+
+    const missingConfirmation = await authenticatedFetch(base, '/api/settings/data/delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: 'reports', filters: { sourceFileName: 'not-a-real-upload' }, previewToken: preview.previewToken, confirmation: '' }) });
+    assert.equal(missingConfirmation.status, 422);
+
+    const changedFilters = await authenticatedFetch(base, '/api/settings/data/delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: 'reports', filters: {}, previewToken: preview.previewToken, confirmation: 'DELETE' }) });
+    assert.equal(changedFilters.status, 409);
+
+    const deleted = await authenticatedFetch(base, '/api/settings/data/delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: 'reports', filters: { sourceFileName: 'not-a-real-upload' }, previewToken: preview.previewToken, confirmation: 'DELETE' }) });
+    assert.equal(deleted.status, 200);
+    assert.deepEqual((await deleted.json()).deleted.deleted, { reports: 0, rows: 0, occurrences: 0, currentOrders: 0 });
+  } finally { await new Promise((resolve) => server.close(resolve)); }
+});
+
 test('admin authentication protects application pages and private APIs, then creates and clears a secure session', async () => {
   const app = require('../src/app'); const server = await new Promise((resolve) => { const listener = app.listen(0, () => resolve(listener)); }); const base = `http://127.0.0.1:${server.address().port}`;
   try {
