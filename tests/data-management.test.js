@@ -31,7 +31,7 @@ test('report cleanup previews matching full datasets and rebuilds current orders
   assert.deepEqual(preview.sampleFiles, ['newer.csv']);
   assert.match(preview.warning, /entire matching reports/);
 
-  const deleted = await manager.delete('tenant-a', 'reports', { sourceFileName: 'newer', masterCategory: 'Home', productCategory: 'Drinkware' });
+  const deleted = await manager.delete('tenant-a', 'reports', { sourceFileName: 'newer', masterCategory: 'Home', productCategory: 'Drinkware' }, preview.selectionFingerprint);
   assert.deepEqual(deleted.deleted, { reports: 1, rows: 1, occurrences: 1, currentOrders: 1 });
   assert.equal((await reportStore.list('tenant-a')).length, 1);
   assert.equal((await reportStore.list('tenant-b')).length, 1);
@@ -50,10 +50,19 @@ test('product mapping cleanup is filtered and never crosses tenant boundaries', 
   const filters = { productSearch: 'Serum A', productCategory: 'Hair Serum', source: 'Manual' };
   const preview = await manager.preview('tenant-a', 'product-mappings', filters);
   assert.deepEqual(preview.counts, { mappings: 1 });
-  const result = await manager.delete('tenant-a', 'product-mappings', filters);
+  const result = await manager.delete('tenant-a', 'product-mappings', filters, preview.selectionFingerprint);
   assert.deepEqual(result.deleted, { mappings: 1 });
   assert.equal((await mappingStore.list('product', 'tenant-a')).length, 1);
   assert.equal((await mappingStore.list('product', 'tenant-b')).length, 1);
+});
+
+test('cleanup refuses to delete records added after the preview', async () => {
+  const { reportStore, manager } = service();
+  await reportStore.create('tenant-a', { templateType: 'full', sourceFileName: 'target.csv', rows: [row()] });
+  const preview = await manager.preview('tenant-a', 'reports', { sourceFileName: 'target.csv' });
+  await reportStore.create('tenant-a', { templateType: 'full', sourceFileName: 'target.csv', rows: [row({ orderId: 'ORD-2' })] });
+  await assert.rejects(manager.delete('tenant-a', 'reports', { sourceFileName: 'target.csv' }, preview.selectionFingerprint), (error) => error.code === 'PREVIEW_STALE' && error.status === 409);
+  assert.equal((await reportStore.list('tenant-a')).length, 2);
 });
 
 test('cleanup rejects unsupported filters and invalid date ranges', async () => {
