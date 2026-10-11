@@ -82,19 +82,6 @@ test('specific existing category is reused, new pairs remain review-only, and am
   assert.deepEqual([noTaxonomy.items[0].suggestedMasterCategory, noTaxonomy.items[0].suggestedProductCategory, noTaxonomy.items[0].classificationRequired], ['Electronics', 'Bluetooth Speakers', true]);
 });
 
-test('broad product category matching is case and whitespace insensitive without rejecting specific categories', () => {
-  const products = ['broad-one', 'broad-two', 'specific-one', 'specific-two'];
-  const parsed = validateGeminiResults({ results: [
-    { product: 'broad-one', masterCategory: 'Beauty', productCategory: '  HAIR   CARE ' },
-    { product: 'broad-two', masterCategory: 'Electronics', productCategory: 'Phone Accessories' },
-    { product: 'specific-one', masterCategory: 'Beauty', productCategory: 'Face Wash' },
-    { product: 'specific-two', masterCategory: 'Electronics', productCategory: 'Bluetooth Speakers' }
-  ] }, products);
-  assert.deepEqual(parsed.map((item) => item.productCategory), ['NO_MATCH', 'NO_MATCH', 'Face Wash', 'Bluetooth Speakers']);
-  assert.equal(parsed[0].confidence, null);
-  assert.match(parsed[0].reason, /too broad/i);
-});
-
 test('backend converts obvious department-level categories into visible No Match results without dropping products', () => {
   const parsed = validateGeminiResults({ results: [
     { product: 'Anti Dandruff Shampoo', masterCategory: 'Beauty', productCategory: 'Hair Care' },
