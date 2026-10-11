@@ -140,7 +140,7 @@ const BROAD_PRODUCT_CATEGORIES = new Set([
   'pet supplies', 'baby products', 'health care', 'healthcare'
 ]);
 function isBroadProductCategory(value) {
-  return BROAD_PRODUCT_CATEGORIES.has(String(value || '').trim().replace(/\\s+/g, ' ').toLowerCase());
+  return BROAD_PRODUCT_CATEGORIES.has(String(value || '').trim().replace(/\s+/g, ' ').toLowerCase());
 }
 function validateGeminiResults(payload, products, taxonomy = {}) {
   if (!payload || !Array.isArray(payload.results)) throw Object.assign(new Error('Gemini returned an invalid structured response.'), { code: 'GEMINI_INVALID_RESPONSE' });
