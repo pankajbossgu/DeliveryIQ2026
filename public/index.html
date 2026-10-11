@@ -422,11 +422,106 @@
       </section>
 
       <!-- Settings -->
-      <section class="page placeholder-page" data-page-panel="settings" aria-labelledby="settings-title" hidden>
-        <p class="eyebrow">SETTINGS</p>
-        <h1 id="settings-title">Workspace settings.</h1>
-        <p>Manage your current DeliveryIQ admin session.</p>
-        <button id="logout-button" class="button button-secondary" type="button">Logout</button>
+      <section class="page settings-page" data-page-panel="settings" aria-labelledby="settings-title" hidden>
+        <header class="settings-page-heading">
+          <p class="eyebrow">WORKSPACE CONTROL</p>
+          <h1 id="settings-title">Workspace &amp; data management</h1>
+          <p>Review exactly what matches your filters before permanently deleting anything.</p>
+        </header>
+
+        <div class="settings-layout">
+          <section class="settings-card settings-data-card" aria-labelledby="data-management-title">
+            <div class="settings-card-heading">
+              <span class="settings-icon" aria-hidden="true">⌘</span>
+              <div><p class="eyebrow">DATA CONTROLS</p><h2 id="data-management-title">Clean up workspace data</h2><p>Choose a data type, narrow the scope, then preview the impact.</p></div>
+            </div>
+            <form id="settings-data-form">
+              <div class="settings-field">
+                <label for="settings-data-scope">What do you want to manage?</label>
+                <select id="settings-data-scope" name="scope">
+                  <option value="reports">Uploaded report datasets</option>
+                  <option value="product-mappings">Saved product mappings</option>
+                  <option value="ai-suggestions">AI classification review suggestions</option>
+                </select>
+                <p class="settings-help" id="settings-scope-help">Deletes whole matching reports and their derived Universal Report records. Category filters select reports; they do not delete only matching rows.</p>
+              </div>
+              <div class="settings-filter-grid">
+                <div class="settings-field" data-settings-only="reports">
+                  <label for="settings-source-file">CSV / upload file name</label>
+                  <input id="settings-source-file" name="sourceFileName" type="text" maxlength="120" placeholder="e.g. orders-september.csv">
+                </div>
+                <div class="settings-field" data-settings-only="reports">
+                  <label for="settings-from-date">Uploaded from</label>
+                  <input id="settings-from-date" name="fromDate" type="date">
+                </div>
+                <div class="settings-field" data-settings-only="reports">
+                  <label for="settings-to-date">Uploaded through</label>
+                  <input id="settings-to-date" name="toDate" type="date">
+                </div>
+                <div class="settings-field" data-settings-only="reports">
+                  <label for="settings-status-category">Delivery status category</label>
+                  <select id="settings-status-category" name="statusCategory"><option value="">All status categories</option></select>
+                </div>
+                <div class="settings-field">
+                  <label for="settings-master-category">Master category</label>
+                  <select id="settings-master-category" name="masterCategory"><option value="">All master categories</option></select>
+                </div>
+                <div class="settings-field">
+                  <label for="settings-product-category">Product category</label>
+                  <select id="settings-product-category" name="productCategory"><option value="">All product categories</option></select>
+                </div>
+                <div class="settings-field" data-settings-only="product-mappings ai-suggestions">
+                  <label for="settings-product-search">Product name contains</label>
+                  <input id="settings-product-search" name="productSearch" type="text" maxlength="120" placeholder="Search product names">
+                </div>
+                <div class="settings-field" data-settings-only="product-mappings">
+                  <label for="settings-mapping-source">Mapping source</label>
+                  <select id="settings-mapping-source" name="source"><option value="">All mapping sources</option><option>AI Approved</option><option>Client Modified</option><option>Manual</option></select>
+                </div>
+                <div class="settings-field" data-settings-only="ai-suggestions">
+                  <label for="settings-suggestion-status">Review status</label>
+                  <select id="settings-suggestion-status" name="status"><option value="">All review statuses</option><option>pending</option><option>approved</option><option>rejected</option><option>modified</option></select>
+                </div>
+              </div>
+              <div class="settings-form-actions">
+                <button id="settings-preview-button" class="button button-primary" type="submit">Preview deletion</button>
+                <button id="settings-clear-filters" class="button button-secondary" type="button">Reset filters</button>
+              </div>
+            </form>
+
+            <section id="settings-data-preview" class="settings-preview" aria-labelledby="settings-preview-title" hidden>
+              <div class="settings-preview-heading"><span class="settings-icon settings-icon-warning" aria-hidden="true">!</span><div><p class="eyebrow">REVIEW BEFORE DELETING</p><h3 id="settings-preview-title">Deletion preview</h3></div></div>
+              <div id="settings-preview-counts" class="settings-count-grid"></div>
+              <p id="settings-preview-warning" class="settings-warning"></p>
+              <div id="settings-preview-files-wrap" hidden><p class="settings-help">Matching uploads (sample)</p><ul id="settings-preview-files" class="settings-file-list"></ul></div>
+              <div class="settings-confirm-box">
+                <label for="settings-delete-confirmation">To confirm, type <strong>DELETE</strong></label>
+                <input id="settings-delete-confirmation" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Type DELETE to enable deletion">
+                <p class="settings-help">This action is permanent. Taxonomy categories themselves are not deleted by this tool.</p>
+                <button id="settings-delete-button" class="button button-danger" type="button" disabled>Delete matching data</button>
+              </div>
+            </section>
+            <p id="settings-data-message" class="settings-message" role="status" aria-live="polite" hidden></p>
+          </section>
+
+          <aside class="settings-side-column">
+            <section class="settings-card settings-guidance-card">
+              <span class="settings-icon" aria-hidden="true">✓</span>
+              <p class="eyebrow">SAFETY BY DESIGN</p>
+              <h2>Know what changes</h2>
+              <ul>
+                <li><strong>Uploaded reports</strong><span>Removes full selected reports and rebuilds current-order projections from remaining history.</span></li>
+                <li><strong>Product mappings</strong><span>Removes saved product-to-category rules only; report history is preserved.</span></li>
+                <li><strong>AI suggestions</strong><span>Clears selected review suggestions only; approved mappings remain.</span></li>
+              </ul>
+              <p class="settings-help">All operations are scoped to this workspace. Every delete requires a fresh preview and confirmation.</p>
+            </section>
+            <section class="settings-card settings-session-card">
+              <div><p class="eyebrow">ACCOUNT SECURITY</p><h2>Admin session</h2><p>End your current session on this device.</p></div>
+              <button id="logout-button" class="button button-secondary" type="button">Log out</button>
+            </section>
+          </aside>
+        </div>
       </section>
     </main>
   </div>
