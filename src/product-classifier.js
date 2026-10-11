@@ -56,7 +56,7 @@ class GeminiProductClassifier {
       'For each product: 1. Prefer an existing Master Category when it is a suitable semantic match. 2. If a suitable existing Master Category exists, use its exact existing name. 3. Within that Master Category, prefer an existing Product Category when it is a suitable semantic match. 4. If the Master Category exists but no suitable Product Category exists under that Master Category, propose a new Product Category under the existing Master Category. 5. If no suitable existing Master Category exists, propose a new Master Category and a new Product Category under it. 6. Never create or suggest a duplicate Master Category when a suitable existing Master Category already exists. 7. Never use a Product Category from a different Master Category. 8. Product Category matching is always scoped to its Master Category. 9. Do not force an unrelated existing category just to avoid proposing a new category. 10. Classify the actual product type, not the brand, marketing wording, or product variant.',
       'IMPORTANT: Existing categories should always be reused when they are a suitable match. New categories are allowed only when the existing taxonomy has no suitable match. Use exact existing category spelling when reusing an existing category. The backend will perform the final taxonomy lookup/creation and must prevent duplicate categories.',
       `PRODUCT CATEGORY SPECIFICITY:
-Product Category must represent the most specific reusable actual product type clearly supported by the product name. Master Category is the broad department; Product Category is the actual product type.
+Product Category must represent the most specific actual reusable product type clearly supported by the product name. Master Category is the broad department; Product Category is the actual product type.
 
 Examples:
 Anti Dandruff Shampoo -> Beauty -> Shampoo
@@ -127,17 +127,32 @@ function extractGeminiResult(payload) {
   const json = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   try { return extractGeminiResult(JSON.parse(json)); } catch (error) { if (error?.code) throw error; throw Object.assign(new Error('Gemini returned invalid JSON.'), { code: 'GEMINI_INVALID_JSON' }); }
 }
+// Broad departments/subdepartments are not specific product types. Keep this
+// conservative: uncertain classifications remain reviewable instead of being
+// silently accepted as a product-category suggestion.
+const BROAD_PRODUCT_CATEGORIES = new Set([
+  'hair care', 'skin care', 'skincare', 'personal care', 'beauty',
+  'audio', 'electronics', 'phone accessories', 'mobile accessories',
+  'accessories', 'drinkware', 'cookware', 'kitchenware', 'home & kitchen',
+  'lighting', 'home decor', 'home decoration', 'clothing', 'apparel',
+  'footwear', 'fashion', 'grocery', 'groceries', 'food', 'beverages',
+  'toys', 'sports', 'sports & outdoors', 'stationery', 'office supplies',
+  'pet supplies', 'baby products', 'health care', 'healthcare'
+]);
+function isBroadProductCategory(value) {
+  return BROAD_PRODUCT_CATEGORIES.has(String(value || '').trim().replace(/\\s+/g, ' ').toLowerCase());
+}
 function validateGeminiResults(payload, products, taxonomy = {}) {
   if (!payload || !Array.isArray(payload.results)) throw Object.assign(new Error('Gemini returned an invalid structured response.'), { code: 'GEMINI_INVALID_RESPONSE' });
   const requested = new Map(products.map((product) => [String(product).trim().toLowerCase(), product])); const seen = new Set(); const results = [];
   for (const item of payload.results) {
     const product = requested.get(String(item?.product || '').trim().toLowerCase());
     if (!product || seen.has(product)) continue;
-    const isNoMatch = item?.masterCategory === 'NO_MATCH' && item?.productCategory === 'NO_MATCH';
+    const broadProductCategory = isBroadProductCategory(item?.productCategory);\n    const isNoMatch = item?.masterCategory === 'NO_MATCH' && item?.productCategory === 'NO_MATCH' || broadProductCategory;
     if (!isNoMatch && (!validAiCategory(item?.masterCategory) || !validAiCategory(item?.productCategory))) continue;
     if (!isNoMatch && (item?.masterCategory === 'NO_MATCH' || item?.productCategory === 'NO_MATCH')) continue;
     seen.add(product);
-    results.push({ product, masterCategory: isNoMatch ? null : item.masterCategory.trim(), productCategory: isNoMatch ? 'NO_MATCH' : item.productCategory.trim(), category: isNoMatch ? 'NO_MATCH' : item.productCategory.trim(), confidence: validConfidence(item.confidence), reason: typeof item.reason === 'string' ? item.reason.slice(0, 240) : null });
+    results.push({ product, masterCategory: isNoMatch ? null : item.masterCategory.trim(), productCategory: isNoMatch ? 'NO_MATCH' : item.productCategory.trim(), category: isNoMatch ? 'NO_MATCH' : item.productCategory.trim(), confidence: isNoMatch ? null : validConfidence(item.confidence), reason: isNoMatch ? (broadProductCategory ? 'The returned product category is too broad to be safely suggested.' : (typeof item.reason === 'string' ? item.reason.slice(0, 240) : null)) : (typeof item.reason === 'string' ? item.reason.slice(0, 240) : null) });
   }
   return results;
 }
