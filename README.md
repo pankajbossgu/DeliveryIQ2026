@@ -1,13 +1,12 @@
 # DeliveryIQ
 
-DeliveryIQ is a single Express, MongoDB/Mongoose, and Vercel application for delivery reporting. Clients select a **Simple** or **Full** report template, upload CSV/XLSX data, review deterministic status mappings and Gemini-assisted product suggestions, and return to persisted reports.
+DeliveryIQ is a single Express, MongoDB/Mongoose, and Vercel application for delivery reporting. Upload one **Full Report** CSV/XLSX template, review deterministic status mappings and Gemini-assisted product suggestions, and return to persisted reports.
 
-## Report templates
+## Full Report template
 
-- **Simple:** `Order ID`, `Order Date`, `Order Status`, `Product Name`, `Payment Mode`.
-- **Full:** Simple fields plus `Product Qty`, `Product Price`, `Courier`, and `Source/Website/Store`.
+The Full Report requires `Order ID`, `Order Date`, `Order Status`, `Product Name`, `Product Qty`, `Product Price`, `Payment Mode`, `Courier`, and `Source/Website/Store`.
 
-Download each CSV/XLSX template from Upload Data. Full-template Product Price is a **unit price**; row value is quantity × unit price. Order metrics count distinct Order IDs; product metrics retain every product row.
+Download the CSV or Excel template from Upload Data. Product Price is a **unit price**; row value is quantity × unit price. Order metrics count distinct Order IDs; product metrics retain every product row.
 
 ## Run and verify
 
