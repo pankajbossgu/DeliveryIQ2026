@@ -72,18 +72,20 @@ test('status mapping defaults are immutable display rows and tenant overrides ta
 });
 test('reports snapshot, filter, and export both taxonomy levels', () => { const rows = [{ normalizedOrderId: '1', category: 'Delivered', originalProductName: 'S-Famw Nail Serum 349', masterCategory: 'Beauty & Personal Care', productCategory: 'Nail Serum', quantity: 1, rowValue: 349 }]; const report = aggregate(rows, 'full'); assert.equal(report.analytics.masterCategory[0].name, 'Beauty & Personal Care'); assert.equal(applyFilters(rows, { masterCategory: 'Beauty & Personal Care' }, 'full').length, 1); assert.match(csv(rows, 'full'), /Master Category/); });
 test('upload validation never calls Gemini before processing and processing calls it for unknown products', async () => { let calls = 0; const file = { originalname: 'orders.csv', buffer: Buffer.from('Order ID,Order Date,Status,Product Name,Order Quantity,Product Price,Payment Mode,Courier,Order Source\n1,2026-01-01,Delivered,S-Famw Nail Serum 349,1,10,COD,C,Store\n') }; const validated = validateUpload(file, { classify: false }); assert.equal(validated.success, true); const result = await processValidatedUpload(validated, { masterCategories: ['Beauty & Personal Care'], productCategories: [{ name: 'Nail Serum', masterCategory: 'Beauty & Personal Care' }], productClassifier: { classifyProducts(products) { calls += 1; return { results: [{ product: products[0], masterCategory: 'Beauty & Personal Care', productCategory: 'Nail Serum' }] }; } } }); assert.equal(calls, 1); assert.equal(result.classifications.products[0].mappingSource, 'ai-suggested'); });
-test('upload validation returns safe, structured details for supported templates and invalid files', () => {
-  for (const templateType of ['simple', 'full']) for (const [extension, buffer] of [['csv', Buffer.from(csvTemplate(templateType))], ['xlsx', xlsxTemplate(templateType)]]) { const result = validateUpload({ originalname: `orders.${extension}`, buffer }, { templateType, classify: false }); assert.equal(result.success, true, `${templateType} ${extension}`); }
-  const missing = validateUpload({ originalname: 'missing.csv', buffer: Buffer.from('Order ID,Status\n1,Delivered\n') }, { templateType: 'simple', classify: false }); assert.equal(missing.code, 'MISSING_REQUIRED_COLUMNS'); assert.deepEqual(missing.details.missingColumns, ['Order Date', 'Product Name', 'Payment Mode']);
-  const invalid = validateUpload({ originalname: 'invalid.csv', buffer: Buffer.from('Order ID,Order Date,Order Status,Product Name,Payment Mode\n,not-a-date,Delivered,Widget,COD\n') }, { templateType: 'simple', classify: false }); assert.equal(invalid.code, 'INVALID_ROWS'); assert.equal(invalid.details.errorCount, 3); assert.ok(invalid.details.errors.every((item) => item.row === 2 && item.column && item.type));
-  const wrongTemplate = validateUpload({ originalname: 'wrong-template.csv', buffer: Buffer.from(csvTemplate('full')) }, { templateType: 'simple', classify: false }); assert.equal(wrongTemplate.code, 'UNKNOWN_COLUMNS'); assert.deepEqual(wrongTemplate.details.unknownColumns, ['Product Qty', 'Product Price', 'Courier', 'Source/Website/Store']);
-  assert.equal(validateUpload({ originalname: 'empty.csv', buffer: Buffer.alloc(0) }, { templateType: 'simple' }).code, 'EMPTY_FILE');
-  assert.equal(validateUpload({ originalname: 'orders.pdf', buffer: Buffer.from('file') }, { templateType: 'simple' }).code, 'UNSUPPORTED_FILE_TYPE');
+test('upload validation accepts only the Full Report template and returns safe structured errors', () => {
+  for (const [extension, buffer] of [['csv', Buffer.from(csvTemplate())], ['xlsx', xlsxTemplate()]]) { const result = validateUpload({ originalname: \`orders.\${extension}\`, buffer }, { templateType: 'full', classify: false }); assert.equal(result.success, true, \`full \${extension}\`); assert.equal(result.templateType, 'full'); }
+  assert.throws(() => csvTemplate('simple'), /Only the Full Report template is supported/);
+  assert.throws(() => xlsxTemplate('simple'), /Only the Full Report template is supported/);
+  assert.equal(validateUpload({ originalname: 'simple.csv', buffer: Buffer.from('Order ID,Order Date,Order Status,Product Name,Payment Mode\n1,2026-01-01,Delivered,Widget,COD\n') }, { templateType: 'full', classify: false }).code, 'INVALID_TEMPLATE_TYPE');
+  const missing = validateUpload({ originalname: 'missing.csv', buffer: Buffer.from('Order ID,Status\n1,Delivered\n') }, { templateType: 'full', classify: false }); assert.equal(missing.code, 'MISSING_REQUIRED_COLUMNS'); assert.ok(missing.details.missingColumns.includes('Product Qty'));
+  const invalid = validateUpload({ originalname: 'invalid.csv', buffer: Buffer.from('Order ID,Order Date,Order Status,Product Name,Product Qty,Product Price,Payment Mode,Courier,Source/Website/Store\n,not-a-date,Delivered,Widget,1,10,COD,C,Store\n') }, { templateType: 'full', classify: false }); assert.equal(invalid.code, 'INVALID_ROWS'); assert.equal(invalid.details.errorCount, 3); assert.ok(invalid.details.errors.every((item) => item.row === 2 && item.column && item.type));
+  assert.equal(validateUpload({ originalname: 'empty.csv', buffer: Buffer.alloc(0) }, { templateType: 'full' }).code, 'EMPTY_FILE');
+  assert.equal(validateUpload({ originalname: 'orders.pdf', buffer: Buffer.from('file') }, { templateType: 'full' }).code, 'UNSUPPORTED_FILE_TYPE');
 });
 test('Gemini uses the hardcoded Flash-Lite model and GEMINI_API_KEY only', () => { const classifier = new GeminiProductClassifier({ apiKey: 'key', model: 'other' }); assert.equal(classifier.model, 'gemini-2.5-flash-lite'); });
 test('report process keeps a complete review snapshot and only one active process', async () => {
   const store = new ProcessingStore({ mongoUri: null });
-  const input = { summary: { detectedProducts: 2 }, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] };
+  const input = { summary: { detectedProducts: 2 }, templateType: 'full', file: { name: 'orders.csv' }, normalizedRows: [] };
   const first = await store.createValidated('client-a', input, 'request-a');
   const second = await store.createValidated('client-a', input, 'request-b');
   assert.equal(second.existing, true); assert.equal(second.job.processId, first.job.processId);
@@ -93,7 +95,7 @@ test('report process keeps a complete review snapshot and only one active proces
 });
 test('completion does not overwrite a cancelled process', async () => {
   const store = new ProcessingStore({ mongoUri: null });
-  const created = await store.createValidated('client-complete-cancel', { summary: {}, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] }, 'request-complete-cancel');
+  const created = await store.createValidated('client-complete-cancel', { summary: {}, templateType: 'full', file: { name: 'orders.csv' }, normalizedRows: [] }, 'request-complete-cancel');
   await store.cancel('client-complete-cancel', created.job.processId);
   const completed = await store.complete(created.job, { reportId: 'should-not-complete' });
   assert.equal(completed.status, 'cancelled');
@@ -102,7 +104,7 @@ test('completion does not overwrite a cancelled process', async () => {
 
 test('cancelling a processing job prevents late stage updates from restoring it', async () => {
   const store = new ProcessingStore({ mongoUri: null });
-  const input = { summary: { detectedProducts: 1 }, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] };
+  const input = { summary: { detectedProducts: 1 }, templateType: 'full', file: { name: 'orders.csv' }, normalizedRows: [] };
   const created = await store.createValidated('client-cancel', input, 'request-cancel');
   let release; const waiting = new Promise((resolve) => { release = resolve; });
   const running = store.start('client-cancel', created.job.processId, async (job, stage) => { await stage('mapping_statuses'); await waiting; await stage('finalizing_report'); return { classifications: { statuses: [], products: [] } }; });
@@ -505,7 +507,7 @@ test('Report Review frontend uses accessible custom dialogs and selection-based 
 
 test('unfinished failed processes remain active until the client explicitly removes them', async () => {
   const store = new ProcessingStore({ mongoUri: null });
-  const input = { summary: { detectedProducts: 1 }, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] };
+  const input = { summary: { detectedProducts: 1 }, templateType: 'full', file: { name: 'orders.csv' }, normalizedRows: [] };
   const first = await store.createValidated('client-active', input, 'request-a');
   first.job.status = 'failed';
   await store.save(first.job);
@@ -568,33 +570,33 @@ test('Upload Data restoration has dedicated lifecycle states and does not reuse 
   assert.match(html, /id="remove-selected-file"/);
 });
 
-test('Upload Data starts with report selection and scopes templates to the chosen report type', () => {
+test('Upload Data offers only Full Report and Universal Report offers one CSV export', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const script = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(html, /id="report-type-selector"/);
-  assert.match(html, /data-report-type="simple"/);
-  assert.match(html, /data-report-type="full"/);
-  assert.match(html, /id="upload-workflow" hidden/);
-  assert.match(html, /id="template-actions"/);
-  assert.doesNotMatch(html, /data-template-link=/);
-  assert.match(html, /id="change-report-type"/);
-  assert.match(html, /✓ Selected/);
-  assert.match(html, /Need a template\?/);
-  assert.match(script, /selectedReportType: null/);
-  assert.match(script, /function renderReportTypeSelection\(/);
-  assert.match(script, /const REPORT_TEMPLATES/);
-  assert.match(script, /function renderSelectedTemplates\(type\)/);
-  assert.match(script, /clear\(actions\)/);
-  assert.match(script, /Changing the report type will clear the current selected file\. Continue\?/);
-  assert.match(script, /function renderProcessing\(process\)/);
+  const uploadSection = html.slice(html.indexOf('data-page-panel="upload"'), html.indexOf('data-page-panel="reports"'));
+  const universalSection = html.slice(html.indexOf('data-page-panel="universal"'), html.indexOf('data-page-panel="products"'));
+  assert.doesNotMatch(uploadSection, /Simple Report|report-type-selector|data-report-type|change-report-type/);
+  assert.match(uploadSection, /id="upload-workflow">/);
+  assert.match(uploadSection, /id="selected-report-title">Full Report/);
+  assert.match(uploadSection, /id="template-actions"/);
+  assert.match(uploadSection, /Need a template\?/);
+  assert.match(uploadSection, /file-upload" type="file" accept="\\.csv,\\.xlsx"/);
+  assert.doesNotMatch(universalSection, /data-export=|Summary Report|Excel report|universal-export-menu/);
+  assert.match(universalSection, /id="universal-export"[^>]*>Download Full Report CSV/);
+  assert.match(script, /selectedReportType: 'full'/);
+  assert.match(script, /const REPORT_TEMPLATES = \\{ full:/);
+  assert.match(script, /function renderSelectedTemplates\\(\\)/);
+  assert.match(script, /function renderUploadTemplate\\(/);
+  assert.match(script, /exportType: 'full', format: 'csv'/);
+  assert.match(script, /deliveryiq-full-report\\.csv/);
+  assert.doesNotMatch(script, /data-export|universal-export-menu|function selectReportType\\(/);
+  assert.match(script, /function renderProcessing\\(process\\)/);
   assert.match(script, /current-process-status/);
   assert.match(script, /Create a new master category/);
   assert.match(script, /Report cancelled/);
-  assert.doesNotMatch(script, /const list = el\('ol', undefined, 'workflow-stepper'\); stages\.forEach/);
 });
-
 test('Report review bulk updates are server-authoritative and completion directs users to both reports', () => {
   const fs = require('node:fs');
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
@@ -614,7 +616,7 @@ test('bulk mapping writes unique product and status selections without repeated 
   assert.equal((await store.list('product', 'bulk-client')).length, 2);
   await store.saveMappings('bulk-client', 'status', ['Awaiting pickup', 'Awaiting pickup', 'Packed'], 'In Transit');
   assert.equal((await store.list('status', 'bulk-client')).length, 2);
-  const processes = new ProcessingStore({ mongoUri: null }); const created = await processes.createValidated('bulk-client', { summary: {}, templateType: 'simple', file: { name: 'orders.csv' }, normalizedRows: [] }, 'bulk-process');
+  const processes = new ProcessingStore({ mongoUri: null }); const created = await processes.createValidated('bulk-client', { summary: {}, templateType: 'full', file: { name: 'orders.csv' }, normalizedRows: [] }, 'bulk-process');
   created.job.status = 'review_required'; created.job.result = { classifications: { statuses: [], products: [{ value: 'Widget', classificationRequired: true }, { value: 'Gadget', classificationRequired: true }] } }; await processes.save(created.job);
   const updated = await processes.updateReviews('bulk-client', created.job.processId, 'product', [{ value: 'Widget', classificationRequired: false }, { value: 'Gadget', classificationRequired: false }]);
   assert.equal(updated.result.classifications.products.filter((item) => !item.classificationRequired).length, 2);
