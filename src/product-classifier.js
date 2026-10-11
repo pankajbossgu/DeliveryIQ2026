@@ -148,7 +148,8 @@ function validateGeminiResults(payload, products, taxonomy = {}) {
   for (const item of payload.results) {
     const product = requested.get(String(item?.product || '').trim().toLowerCase());
     if (!product || seen.has(product)) continue;
-    const broadProductCategory = isBroadProductCategory(item?.productCategory);\n    const isNoMatch = item?.masterCategory === 'NO_MATCH' && item?.productCategory === 'NO_MATCH' || broadProductCategory;
+    const broadProductCategory = isBroadProductCategory(item?.productCategory);
+    const isNoMatch = item?.masterCategory === 'NO_MATCH' && item?.productCategory === 'NO_MATCH' || broadProductCategory;
     if (!isNoMatch && (!validAiCategory(item?.masterCategory) || !validAiCategory(item?.productCategory))) continue;
     if (!isNoMatch && (item?.masterCategory === 'NO_MATCH' || item?.productCategory === 'NO_MATCH')) continue;
     seen.add(product);
