@@ -80,6 +80,22 @@ function buckets(items, field) { return Object.fromEntries(items.filter((item) =
 function summaryFromBuckets(summary) { const total = summary.totals?.[0] || {}; return { totalOrders: total.totalOrders || 0, totalValue: Number((total.totalValue || 0).toFixed(2)), totalQuantity: total.totalQuantity || 0, byStatusCategory: buckets(summary.byStatusCategory || []), byStatus: buckets(summary.byStatus || []) }; }
 function summaryFromOrders(orders) { const group = (field) => orders.reduce((result, order) => { if (order[field]) result[order[field]] = (result[order[field]] || 0) + 1; return result; }, {}); return { totalOrders: orders.length, totalValue: Number(orders.reduce((total, order) => total + (order.totalValue || 0), 0).toFixed(2)), totalQuantity: orders.reduce((total, order) => total + (order.totalQuantity || 0), 0), byStatusCategory: group('statusCategory'), byStatus: group('originalStatus') }; }
 function universalFilter(clientId, { search, status, statusCategory, paymentMode, fromDate, toDate, reportFromDate, reportToDate } = {}) { const filter = { clientId }; paymentMode = normalizePaymentMode(paymentMode); if (search) filter.canonicalOrderId = { $regex: `^${escapeRegex(search)}`, $options: 'i' }; if (status) filter.originalStatus = status; if (statusCategory) filter.statusCategory = statusCategory; if (paymentMode) filter.paymentMode = paymentMode === 'COD' ? { $in: ['COD', 'cod', 'Cash on Delivery', 'cash on delivery'] } : paymentMode === 'Prepaid' ? { $in: ['Prepaid', 'prepaid', 'Pre Paid', 'pre paid'] } : paymentMode; if (fromDate || toDate) filter.orderDate = dateRange(fromDate, toDate); if (reportFromDate || reportToDate) filter.latestReportCompletedAt = dateRange(reportFromDate, reportToDate); return filter; }
+function reportRowFilter(clientId, reportId, filters = {}, templateType) {
+  const allowed = new Set(dimensions(templateType));
+  const fields = { date: 'orderDate', category: 'category', masterCategory: 'masterCategory', product: 'originalProductName', productCategory: 'productCategory', paymentMode: 'paymentMode', courier: 'courier', orderSource: 'orderSource' };
+  const query = { clientId, reportId };
+  const dateConditions = [];
+  if (filters.from || filters.to) dateConditions.push({ orderDate: dateRange(filters.from, filters.to) });
+  for (const [key, value] of Object.entries(filters)) {
+    if (!value || ['from', 'to'].includes(key)) continue;
+    if (!allowed.has(key) && key !== 'category') return null;
+    if (key === 'date') dateConditions.push({ orderDate: String(value) });
+    else query[fields[key]] = String(value);
+  }
+  if (dateConditions.length === 1) Object.assign(query, dateConditions[0]);
+  else if (dateConditions.length > 1) query.$and = dateConditions;
+  return query;
+}
 function analyticsFromOrders(orders) { const summary = summaryFromOrders(orders); const total = summary.totalOrders; const grouped = (field) => Object.entries(summary[field] || {}).map(([name, count]) => ({ name, count, percentage: percent(count, total) })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)); const trendMap = new Map(); const productMap = new Map(); orders.forEach((order) => { if (order.orderDate) { const item = trendMap.get(order.orderDate) || { date: order.orderDate, count: 0, value: 0 }; item.count += 1; item.value += Number(order.totalValue || 0); trendMap.set(order.orderDate, item); } (order.products || []).forEach((line) => { const name = line.originalProductName || line.normalizedProductName || 'Unmapped product'; const item = productMap.get(name) || { name, quantity: 0, value: 0, orderIds: new Set() }; item.quantity += Number(line.quantity || 0); item.value += Number(line.rowValue || 0); item.orderIds.add(order.canonicalOrderId); productMap.set(name, item); }); }); const products = [...productMap.values()].map((item) => ({ name: item.name, quantity: item.quantity, value: Number(item.value.toFixed(2)), orderCount: item.orderIds.size })).sort((a, b) => b.quantity - a.quantity || b.value - a.value || a.name.localeCompare(b.name)).slice(0, 10); const rto = (summary.byStatusCategory.RTO || 0); return { summary: { ...summary, rtoOrders: rto, rtoPercentage: percent(rto, total), rtoValue: Number(orders.filter((order) => order.statusCategory === 'RTO').reduce((sum, order) => sum + Number(order.totalValue || 0), 0).toFixed(2)) }, statusCategories: grouped('byStatusCategory'), statuses: grouped('byStatus'), trends: [...trendMap.values()].map((item) => ({ ...item, value: Number(item.value.toFixed(2)) })).sort((a, b) => a.date.localeCompare(b.date)), products, attention: rto ? [{ type: 'RTO', count: rto, percentage: percent(rto, total), value: Number(orders.filter((order) => order.statusCategory === 'RTO').reduce((sum, order) => sum + Number(order.totalValue || 0), 0).toFixed(2)) }] : [] }; }
 class UniversalStore {
   constructor({ mongoUri = process.env.MONGODB_URI } = {}) { this.mongoUri = mongoUri; this.connection = null; this.orders = new Map(); this.occurrences = new Map(); this.syncs = new Map(); this.payloads = new PayloadStore(() => this.database()); }
@@ -199,14 +215,48 @@ class UniversalStore {
     if (quickInsight && !QUICK_INSIGHTS.has(quickInsight)) throw new Error('Invalid Universal Report insight.');
     const labels = { product: 'Product', product_category: 'Product Category', courier: 'Courier', category_status: 'Status Category' };
     if (!labels[analyzeBy]) throw new Error('Invalid Universal Report view.');
+    const requestStartedAt = performance.now();
+    const performanceTimings = { stages: {} };
     const filter = universalFilter(clientId, filters);
+    let stageStartedAt = performance.now();
     const database = await this.database();
-    const orders = await (database ? UniversalOrder.find(filter).lean() : [...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, filters)));
-    if (database) for (const order of orders) await this.hydrateProducts(clientId, order);
+    recordDuration(performanceTimings, 'databaseConnectionMs', stageStartedAt);
+    const insightAnalyzeBy = quickInsight === 'best-categories' ? 'product_category' : quickInsight === 'best-couriers' ? 'courier' : 'product';
+    const needsProducts = ['product', 'product_category'].includes(analyzeBy)
+      || Boolean(quickInsight && ['product', 'product_category'].includes(insightAnalyzeBy));
+    stageStartedAt = performance.now();
+    let orders;
+    if (database) {
+      let orderQuery = UniversalOrder.find(filter);
+      // Courier/status reports only need order-level fields unless a product insight is active.
+      // Excluding product arrays and payload references avoids transferring unused data from MongoDB.
+      if (!needsProducts) orderQuery = orderQuery.select({
+        canonicalOrderId: 1, statusCategory: 1, originalStatus: 1, courier: 1,
+        totalValue: 1, totalQuantity: 1, orderDate: 1
+      });
+      orders = await orderQuery.lean();
+    } else {
+      orders = [...this.orders.values()].filter((order) => order.clientId === clientId && matchesUniversal(order, filters));
+    }
+    recordDuration(performanceTimings, 'orderQueryMs', stageStartedAt);
+    stageStartedAt = performance.now();
+    if (database && needsProducts) {
+      // Payload reads are independent, but unbounded Promise.all can overload MongoDB
+      // on reports with many large orders. Hydrate only external snapshots, in small batches.
+      const externalOrders = orders.filter((order) => order.productsRef);
+      const hydrationBatchSize = 8;
+      for (let offset = 0; offset < externalOrders.length; offset += hydrationBatchSize) {
+        await Promise.all(externalOrders.slice(offset, offset + hydrationBatchSize)
+          .map((order) => this.hydrateProducts(clientId, order)));
+      }
+    }
+    recordDuration(performanceTimings, 'productHydrationMs', stageStartedAt);
+    stageStartedAt = performance.now();
     const paymentModes = database ? await UniversalOrder.distinct('paymentMode', { clientId, paymentMode: { $type: 'string', $ne: '' } }) : [...new Set([...this.orders.values()].filter((order) => order.clientId === clientId && order.paymentMode).map((order) => order.paymentMode))];
+    recordDuration(performanceTimings, 'paymentModesMs', stageStartedAt);
+    const aggregationStartedAt = performance.now();
     const emptyCounts = () => Object.fromEntries(CATEGORIES.map((category) => [category, 0]));
     const groups = new Map();
-    const insightAnalyzeBy = quickInsight === 'best-categories' ? 'product_category' : quickInsight === 'best-couriers' ? 'courier' : 'product';
     const insightGroups = quickInsight && analyzeBy !== insightAnalyzeBy ? new Map() : null;
     const add = (key, name, order, value, target = groups) => {
       const item = target.get(key) || { name, totalOrders: 0, delivered: 0, inTransit: 0, ndr: 0, rto: 0, cancelled: 0, other: 0, totalOrderValue: 0, deliveredOrderValue: 0, _orders: new Set() };
@@ -281,6 +331,19 @@ class UniversalStore {
     totals.deliveryView = deliveryView;
     Object.assign(totals, basisMetrics(totals.totalOrders, { ...emptyCounts(), ...totals.byStatusCategory }));
     const dates = orders.map((order) => order.orderDate).filter(Boolean).sort();
+    recordDuration(performanceTimings, 'aggregationMs', aggregationStartedAt);
+    const totalMs = performance.now() - requestStartedAt;
+    if (totalMs >= 250) {
+      console.info(JSON.stringify({
+        event: 'universal_grouped_report_performance',
+        clientId,
+        analyzeBy,
+        quickInsight,
+        matchedOrders: orders.length,
+        groupCount: rows.length,
+        timingsMs: { ...performanceTimings.stages, total: totalMs }
+      }));
+    }
     return { analyzeBy, deliveryView, orderTotalLabel, groupLabel: labels[analyzeBy], rows, totals, ...(insight ? { insight } : {}), paymentModes: paymentModes.sort((a, b) => String(a).localeCompare(String(b))), range: { from: dates[0] || null, to: dates.at(-1) || null } };
   }
   async markFailed(clientId, reportId) {
@@ -401,7 +464,52 @@ class ReportStore {
     return report;
   }
   async list(clientId) { if (await this.database()) return Report.find({ clientId, reportStatus: 'completed' }).sort({ createdAt: -1 }).lean(); return [...this.memory.values()].filter((report) => report.clientId === clientId && report.reportStatus === 'completed').sort((a, b) => b.createdAt - a.createdAt); }
-  async detail(clientId, reportId, filters = {}) { const report = await (await this.database() ? Report.findOne({ clientId, reportId }).lean() : this.memory.get(reportId)); if (!report || report.clientId !== clientId) return null; const analytics = report.analyticsRef ? await this.payloads.read(clientId, reportId, report.analyticsRef) : report.analytics; const allRows = await (await this.database() ? ReportRow.find({ clientId, reportId }).lean() : this.rows.get(reportId) || []); const rows = applyFilters(allRows, filters, report.templateType); return { ...report, analytics, filtered: aggregate(rows, report.templateType), filters: { availableDimensions: report.availableDimensions }, exportRows: rows }; }
+  async detail(clientId, reportId, filters = {}) {
+    const requestStartedAt = performance.now();
+    const performanceTimings = { stages: {} };
+    let stageStartedAt = performance.now();
+    const database = await this.database();
+    const report = database
+      ? await Report.findOne({ clientId, reportId }).lean()
+      : this.memory.get(reportId);
+    recordDuration(performanceTimings, 'reportLookupMs', stageStartedAt);
+    if (!report || report.clientId !== clientId) return null;
+
+    stageStartedAt = performance.now();
+    const analytics = report.analyticsRef
+      ? await this.payloads.read(clientId, reportId, report.analyticsRef)
+      : report.analytics;
+    recordDuration(performanceTimings, 'analyticsReadMs', stageStartedAt);
+
+    stageStartedAt = performance.now();
+    let allRows;
+    if (database) {
+      // Push supported filters into MongoDB so date-filtered detail views fetch fewer rows.
+      // reportRowFilter returns null for unsupported active filters, matching applyFilters' empty result.
+      const rowFilter = reportRowFilter(clientId, reportId, filters, report.templateType);
+      allRows = rowFilter ? await ReportRow.find(rowFilter).lean() : [];
+    } else {
+      allRows = this.rows.get(reportId) || [];
+    }
+    recordDuration(performanceTimings, 'rowQueryMs', stageStartedAt);
+
+    stageStartedAt = performance.now();
+    const rows = applyFilters(allRows, filters, report.templateType);
+    const filtered = aggregate(rows, report.templateType);
+    recordDuration(performanceTimings, 'filterAndAggregateMs', stageStartedAt);
+
+    const totalMs = performance.now() - requestStartedAt;
+    if (totalMs >= 250) {
+      console.info(JSON.stringify({
+        event: 'report_detail_performance',
+        clientId,
+        reportId,
+        matchedRows: rows.length,
+        timingsMs: { ...performanceTimings.stages, total: totalMs }
+      }));
+    }
+    return { ...report, analytics, filtered, filters: { availableDimensions: report.availableDimensions }, exportRows: rows };
+  }
 }
 // A failed process is still unfinished: only completion or explicit removal releases the client.
 const ACTIVE_PROCESS_STATUSES = ['queued', 'processing', 'review_required', 'finalizing', 'failed'];
@@ -681,4 +789,4 @@ class ProcessingStore {
   }
 }
 
-module.exports = { PayloadStore, ReportPayload, ReportProcess, PAYLOAD_CHUNK_BYTES, ReportStore, ProcessingStore, UniversalStore, UniversalOrder, UniversalOrderOccurrence, UniversalSync, aggregate, applyFilters, csv, csvLine, safeCell, universalExportRows, UNIVERSAL_EXPORT_HEADERS, dimensions };
+module.exports = { PayloadStore, ReportPayload, ReportProcess, PAYLOAD_CHUNK_BYTES, ReportStore, ProcessingStore, UniversalStore, UniversalOrder, UniversalOrderOccurrence, UniversalSync, aggregate, applyFilters, csv, csvLine, safeCell, universalExportRows, UNIVERSAL_EXPORT_HEADERS, dimensions, reportRowFilter };
