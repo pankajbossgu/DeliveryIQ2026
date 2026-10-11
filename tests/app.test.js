@@ -79,7 +79,7 @@ test('upload validation accepts only the Full Report template and returns safe s
   for (const [extension, buffer] of [['csv', Buffer.from(csvTemplate())], ['xlsx', xlsxTemplate()]]) { const result = validateUpload({ originalname: 'orders.' + extension, buffer }, { templateType: 'full', classify: false }); assert.equal(result.success, true, 'full ' + extension); assert.equal(result.templateType, 'full'); }
   assert.throws(() => csvTemplate('simple'), /Only the Full Report template is supported/);
   assert.throws(() => xlsxTemplate('simple'), /Only the Full Report template is supported/);
-  assert.equal(validateUpload({ originalname: 'simple.csv', buffer: Buffer.from('Order ID,Order Date,Order Status,Product Name,Payment Mode\n1,2026-01-01,Delivered,Widget,COD\n') }, { templateType: 'full', classify: false }).code, 'INVALID_TEMPLATE_TYPE');
+  assert.equal(validateUpload({ originalname: 'simple.csv', buffer: Buffer.from('Order ID,Order Date,Order Status,Product Name,Payment Mode\n1,2026-01-01,Delivered,Widget,COD\n') }, { templateType: 'full', classify: false }).code, 'MISSING_REQUIRED_COLUMNS');
   assert.equal(validateUpload({ originalname: 'simple-auto.csv', buffer: Buffer.from('Order ID,Order Date,Order Status,Product Name,Payment Mode\n1,2026-01-01,Delivered,Widget,COD\n') }, { templateType: 'auto', classify: false }).code, 'MISSING_REQUIRED_COLUMNS');
   const missing = validateUpload({ originalname: 'missing.csv', buffer: Buffer.from('Order ID,Status\n1,Delivered\n') }, { templateType: 'full', classify: false }); assert.equal(missing.code, 'MISSING_REQUIRED_COLUMNS'); assert.ok(missing.details.missingColumns.includes('Product Qty'));
   const invalid = validateUpload({ originalname: 'invalid.csv', buffer: Buffer.from('Order ID,Order Date,Order Status,Product Name,Product Qty,Product Price,Payment Mode,Courier,Source/Website/Store\n,not-a-date,Delivered,Widget,1,10,COD,C,Store\n') }, { templateType: 'full', classify: false }); assert.equal(invalid.code, 'INVALID_ROWS'); assert.equal(invalid.details.errorCount, 3); assert.ok(invalid.details.errors.every((item) => item.row === 2 && item.column && item.type));
@@ -287,7 +287,7 @@ test('Universal Report frontend uses the grouped business report without legacy 
   const fs = require('node:fs');
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const script = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /REPORT BASIS/); assert.match(html, /All Orders/); assert.match(html, /Shipped Orders/); assert.match(html, /name="deliveryView" value="all_orders"/); assert.match(html, /data-payment="COD"/); assert.match(html, /Last 30 Days/); assert.match(html, /Summary Report/);
+  assert.match(html, /data-page="universal"/); assert.match(html, /data-analyze="product"/); assert.match(html, /Product Category/); assert.match(html, /Courier/); assert.match(html, /REPORT BASIS/); assert.match(html, /All Orders/); assert.match(html, /Shipped Orders/); assert.match(html, /name="deliveryView" value="all_orders"/); assert.match(html, /data-payment="COD"/); assert.match(html, /Last 30 Days/); assert.match(html, /Download Full Report CSV/);
   assert.match(html, /data-universal-mode="overview" class="is-active" aria-pressed="true">Overview/); assert.match(html, /data-universal-mode="insights" aria-pressed="false"/);
   assert.match(html, /id="universal-insight-results"/); assert.match(html, /data-quick-insight="rto-risk" aria-pressed="false">/); assert.match(html, /data-quick-insight="ndr-risk" aria-pressed="false">/); assert.match(html, /data-quick-insight="best-categories" aria-pressed="false">/); assert.match(html, /data-quick-insight="best-couriers" aria-pressed="false">/);
   assert.match(html, /id="universal-insight-description"/);
@@ -299,7 +299,6 @@ test('Universal Report frontend uses the grouped business report without legacy 
   assert.match(script, /if \(state\.universal\.controller === controller\) state\.universal\.loading = false/);
   assert.ok(script.indexOf("const universalView = { mode: 'overview', quickInsight: 'top-performers' }") < script.indexOf("document.body.classList.add('upload-restoring'); page(pageFromLocation())"));
 });
-
 
 test('universal grouped report uses normalized dimensions, tenant scope, and payment mode filtering', async () => {
   const store = new UniversalStore({ mongoUri: null });
@@ -569,7 +568,7 @@ test('Upload Data restoration has dedicated lifecycle states and does not reuse 
   assert.match(server, /function activeProcessUploadMessage\(/);
   assert.ok(server.indexOf('const active = await processingStore.getActiveProcess(clientId);') < server.indexOf('const result = validateUpload'));
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  assert.match(uploadSection, /file-upload" type="file" accept="\.csv,\.xlsx"/);
+
   assert.match(html, /id="selected-file" hidden/);
   assert.match(html, /id="remove-selected-file"/);
 });
@@ -586,7 +585,7 @@ test('Upload Data offers only Full Report and Universal Report offers one CSV ex
   assert.match(uploadSection, /id="selected-report-title">Full Report/);
   assert.match(uploadSection, /id="template-actions"/);
   assert.match(uploadSection, /Need a template\?/);
-  assert.match(uploadSection, /file-upload" type="file" accept="\\.csv,\\.xlsx"/);
+  assert.ok(uploadSection.includes('accept=".csv,.xlsx"'));
   assert.doesNotMatch(universalSection, /data-export=|Summary Report|Excel report|universal-export-menu/);
   assert.match(universalSection, /id="universal-export"[^>]*>Download Full Report CSV/);
   assert.match(script, /selectedReportType: 'full'/);
