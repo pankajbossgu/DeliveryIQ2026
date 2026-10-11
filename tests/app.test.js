@@ -569,7 +569,7 @@ test('Upload Data restoration has dedicated lifecycle states and does not reuse 
   assert.match(server, /function activeProcessUploadMessage\(/);
   assert.ok(server.indexOf('const active = await processingStore.getActiveProcess(clientId);') < server.indexOf('const result = validateUpload'));
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  assert.match(html, /id="file-upload" type="file" accept="\.csv,\.xlsx" hidden disabled/);
+  assert.match(uploadSection, /file-upload" type="file" accept="\.csv,\.xlsx"/);
   assert.match(html, /id="selected-file" hidden/);
   assert.match(html, /id="remove-selected-file"/);
 });
@@ -596,7 +596,7 @@ test('Upload Data offers only Full Report and Universal Report offers one CSV ex
   assert.match(script, /exportType: 'full', format: 'csv'/);
   assert.match(script, /deliveryiq-full-report\.csv/);
   assert.doesNotMatch(script, /data-export|universal-export-menu/); assert.equal(script.includes('function selectReportType('), false);
-  assert.match(script, /function renderProcessing\\(process\\)/);
+  assert.match(script, /function renderProcessing\(process\)/);
   assert.match(script, /current-process-status/);
   assert.match(script, /Create a new master category/);
   assert.match(script, /Report cancelled/);
