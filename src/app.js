@@ -8,7 +8,7 @@ const rateLimit = require('express-rate-limit');
 const { validateUpload, processValidatedUpload, MAX_SOURCE_ROWS, MAX_FILE_SIZE, csvTemplate, xlsxTemplate, xlsxWorkbook } = require('./upload');
 const { REPORT_CATEGORIES } = require('./classification');
 const { MappingStore } = require('./mappings');
-const { DataManagementService } = require('./data-management');
+const { DataManagementService, cleanFilters } = require('./data-management');
 const { ReportStore, ProcessingStore, csv: reportCsv, csvLine, universalExportRows, UNIVERSAL_EXPORT_HEADERS } = require('./reports');
 const { GeminiProductClassifier, BATCH_SIZE } = require('./product-classifier');
 const { classifyProducts, normalizeProductName } = require('./product');
@@ -82,7 +82,7 @@ app.post('/api/settings/data/preview', async (request, response) => {
 });
 app.post('/api/settings/data/delete', async (request, response) => {
   try {
-    const scope = request.body?.scope; const filters = request.body?.filters || {};
+    const scope = request.body?.scope; const filters = cleanFilters(scope, request.body?.filters || {});
     if (request.body?.confirmation !== 'DELETE') return response.status(422).json({ success: false, code: 'DELETE_CONFIRMATION_REQUIRED', message: 'Type DELETE to confirm this operation.' });
     if (!verifyDataPreviewToken(request.body?.previewToken, clientId, scope, filters)) return response.status(409).json({ success: false, code: 'PREVIEW_EXPIRED', message: 'This preview expired or its filters changed. Preview the deletion again.' });
     const deleted = await dataManagement.delete(clientId, scope, filters);
