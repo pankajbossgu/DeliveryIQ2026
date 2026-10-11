@@ -53,7 +53,7 @@ document.addEventListener('pointerdown', (event) => { if (activePremiumSelect &&
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closePremiumSelect(); });
 new MutationObserver((mutations) => mutations.forEach((mutation) => mutation.addedNodes.forEach((node) => { if (node.nodeType !== Node.ELEMENT_NODE) return; if (node.matches?.('select')) enhanceSelect(node); enhanceAllSelects(node); }))).observe(document.documentElement, { childList: true, subtree: true });
 enhanceAllSelects();
-function page(name) { if (typeof closeMobileMenu === 'function') closeMobileMenu(); document.querySelectorAll('[data-page-panel]').forEach((node) => { node.hidden = node.dataset.pagePanel !== name; }); document.querySelectorAll('[data-page]').forEach((node) => node.classList.toggle('is-active', node.dataset.page === name)); if (name === 'upload') restoreActiveProcess(); if (name === 'reports' || name === 'history') return loadReports(); if (name === 'universal') loadUniversal(); if (name === 'products') loadProducts(); if (name === 'statuses') loadStatuses(); }
+function page(name) { if (typeof closeMobileMenu === 'function') closeMobileMenu(); document.querySelectorAll('[data-page-panel]').forEach((node) => { node.hidden = node.dataset.pagePanel !== name; }); document.querySelectorAll('[data-page]').forEach((node) => node.classList.toggle('is-active', node.dataset.page === name)); if (name === 'upload') restoreActiveProcess(); if (name === 'reports' || name === 'history') return loadReports(); if (name === 'universal') loadUniversal(); if (name === 'products') loadProducts(); if (name === 'statuses') loadStatuses(); if (name === 'settings' && !state.configLoaded) refreshConfig().catch(() => settingsMessage('Category filters could not be loaded. You can still use text/date filters.', true)); }
 function setUpload(title, text) { $('#upload-state-title').textContent = title; $('#upload-state-copy').textContent = text; }
 function setWorkflowStep(active, completed = []) { const steps = [...document.querySelectorAll('#upload-workflow > .workflow-stepper li')]; steps.forEach((step, index) => { const complete = completed.includes(index); step.classList.toggle('is-active', index === active); step.classList.toggle('is-complete', complete); step.setAttribute('aria-current', index === active ? 'step' : 'false'); const number = step.querySelector('.workflow-step-number'); if (number) number.textContent = complete ? '✓' : String(index + 1); }); }
 function processingStageIndex(stage) { return Math.max(0, PROCESSING_STAGES.findIndex(([key]) => key === stage)); }
@@ -94,8 +94,129 @@ function restorationFailed(message = "Couldn't check your current report.") { co
 function hasReviewSnapshot(process) { return Array.isArray(process?.classifications?.statuses) && Array.isArray(process?.classifications?.products); }
 function unresolvedCount(process) { const classifications = process.classifications || {}; return [...(classifications.statuses || []), ...(classifications.products || [])].filter((item) => item.classificationRequired).length; }
 function renderReviewResume(process) { const classifications = process.classifications || {}; const productsRemaining = (classifications.products || []).filter((item) => item.classificationRequired).length; const statusesRemaining = (classifications.statuses || []).filter((item) => item.classificationRequired).length; const suggestionsRemaining = (classifications.products || []).filter((item) => item.classificationRequired && item.suggestedProductCategory).length; const remaining = productsRemaining + statusesRemaining; if (!remaining) return renderReview(); const target = notice('Previous report needs your attention', 'Your previous report is not finished yet. Continue where you left off, or remove it before uploading a new file.'); const stats = el('div', undefined, 'review-stats'); [['Products remaining', productsRemaining], ['Statuses remaining', statusesRemaining], ['AI suggestions remaining', suggestionsRemaining], ['Total unresolved items', remaining]].forEach(([label, value]) => { const card = el('div'); card.append(el('span', label), el('strong', String(value))); stats.append(card); }); const actions = el('div', undefined, 'review-actions'); const continueReview = el('button', 'Continue Review', 'button button-primary'); continueReview.type = 'button'; continueReview.addEventListener('click', () => renderReview()); const remove = el('button', 'Clear Result', 'button button-danger'); remove.type = 'button'; remove.addEventListener('click', removeReportModal); actions.append(continueReview, remove); target.append(stats, actions); }
-async function refreshConfig() { const response = await fetch('/api/classifications/config'); if (!response.ok) throw new Error('Configuration could not be loaded.'); const config = await response.json(); state.config = config; state.configLoaded = true; universalRefreshCategories(); }
+async function refreshConfig() { const response = await fetch('/api/classifications/config'); if (!response.ok) throw new Error('Configuration could not be loaded.'); const config = await response.json(); state.config = config; state.configLoaded = true; universalRefreshCategories(); refreshSettingsCategories(); }
 function choices(select, values, initial = 'All') { const current = select.value; clear(select); select.append(new Option(initial, '')); values.filter(Boolean).sort().forEach((value) => select.append(new Option(value, value))); select.value = values.includes(current) ? current : ''; }
+
+const SETTINGS_FILTERS = {
+  reports: ['sourceFileName', 'fromDate', 'toDate', 'statusCategory', 'masterCategory', 'productCategory'],
+  'product-mappings': ['productSearch', 'source', 'masterCategory', 'productCategory'],
+  'ai-suggestions': ['productSearch', 'status', 'masterCategory', 'productCategory']
+};
+let settingsPreviewToken = null;
+let settingsPreviewScope = null;
+let settingsPreviewFilters = null;
+function refreshSettingsCategories() {
+  if (!state.config) return;
+  choices($('#settings-master-category'), (state.config.masterCategories || []).map((item) => typeof item === 'string' ? item : item.name), 'All master categories');
+  choices($('#settings-product-category'), (state.config.productCategories || []).map((item) => typeof item === 'string' ? item : item.name), 'All product categories');
+  choices($('#settings-status-category'), state.config.statusCategories || [], 'All status categories');
+}
+function settingsMessage(message, isError = false) {
+  const target = $('#settings-data-message'); if (!target) return;
+  target.hidden = !message; target.textContent = message || ''; target.classList.toggle('is-error', Boolean(isError));
+}
+function resetSettingsPreview() {
+  settingsPreviewToken = null; settingsPreviewScope = null; settingsPreviewFilters = null;
+  $('#settings-data-preview').hidden = true; $('#settings-delete-confirmation').value = ''; $('#settings-delete-button').disabled = true;
+}
+function updateSettingsScope() {
+  const scope = $('#settings-data-scope').value;
+  document.querySelectorAll('[data-settings-only]').forEach((node) => {
+    node.hidden = !node.dataset.settingsOnly.split(/\s+/).includes(scope);
+  });
+  const help = {
+    reports: 'Deletes whole matching reports and their derived Universal Report records. Category filters select reports; they do not delete only matching rows.',
+    'product-mappings': 'Deletes matching saved product-to-category rules only. Uploaded reports and historical analytics remain unchanged.',
+    'ai-suggestions': 'Deletes saved AI classification review suggestions only. Approved mappings and uploaded reports remain unchanged.'
+  };
+  $('#settings-scope-help').textContent = help[scope];
+  resetSettingsPreview(); settingsMessage('');
+}
+function settingsFilters() {
+  const scope = $('#settings-data-scope').value; const filters = {};
+  for (const name of SETTINGS_FILTERS[scope] || []) {
+    const node = document.getElementById('settings-' + ({
+      sourceFileName: 'source-file', fromDate: 'from-date', toDate: 'to-date', statusCategory: 'status-category',
+      masterCategory: 'master-category', productCategory: 'product-category', productSearch: 'product-search',
+      source: 'mapping-source', status: 'suggestion-status'
+    })[name]);
+    if (node && node.value.trim()) filters[name] = node.value.trim();
+  }
+  return filters;
+}
+function renderSettingsPreview(preview) {
+  const target = $('#settings-preview-counts'); clear(target);
+  const labels = { reports: [['reports', 'Reports to delete'], ['rows', 'Product/order rows'], ['uniqueOrders', 'Unique orders affected']], 'product-mappings': [['mappings', 'Mappings to delete']], 'ai-suggestions': [['suggestions', 'Suggestions to delete']] };
+  (labels[preview.scope] || []).forEach(([key, label]) => {
+    const card = el('div', undefined, 'settings-count');
+    card.append(el('strong', Number(preview.counts?.[key] || 0).toLocaleString()), el('span', label)); target.append(card);
+  });
+  $('#settings-preview-warning').textContent = preview.warning || 'Review the counts before continuing.';
+  const wrap = $('#settings-preview-files-wrap'); const list = $('#settings-preview-files'); clear(list);
+  (preview.sampleFiles || []).forEach((file) => list.append(el('li', file)));
+  wrap.hidden = !(preview.sampleFiles || []).length;
+  $('#settings-data-preview').hidden = false;
+  $('#settings-delete-confirmation').value = '';
+  $('#settings-delete-button').disabled = true;
+}
+async function previewSettingsDeletion(event) {
+  event?.preventDefault();
+  const button = $('#settings-preview-button'); if (button.disabled) return;
+  resetSettingsPreview(); settingsMessage('');
+  const scope = $('#settings-data-scope').value; const filters = settingsFilters();
+  button.disabled = true; button.textContent = 'Previewing…';
+  try {
+    const response = await fetch('/api/settings/data/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope, filters }) });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) throw new Error(payload.message || 'Could not preview deletion.');
+    settingsPreviewToken = payload.previewToken; settingsPreviewScope = scope; settingsPreviewFilters = JSON.stringify(filters);
+    renderSettingsPreview(payload.preview);
+    const total = Object.values(payload.preview.counts || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+    if (!total) settingsMessage('No records match these filters. Nothing will be deleted.');
+  } catch (error) { settingsMessage(error.message || 'Could not preview deletion.', true); }
+  finally { button.disabled = false; button.textContent = 'Preview deletion'; }
+}
+async function deleteSettingsData() {
+  const button = $('#settings-delete-button'); if (button.disabled || $('#settings-delete-confirmation').value.trim() !== 'DELETE') return;
+  const scope = $('#settings-data-scope').value; const filters = settingsFilters();
+  if (!settingsPreviewToken || scope !== settingsPreviewScope || JSON.stringify(filters) !== settingsPreviewFilters) { resetSettingsPreview(); return settingsMessage('Your filters changed. Preview the deletion again before continuing.', true); }
+  button.disabled = true; button.textContent = 'Deleting…'; settingsMessage('');
+  try {
+    const response = await fetch('/api/settings/data/delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope, filters, previewToken: settingsPreviewToken, confirmation: 'DELETE' }) });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) throw new Error(payload.message || 'Could not delete the selected data.');
+    resetSettingsPreview();
+    const summary = Object.entries(payload.deleted || {}).map(([key, value]) => Number(value).toLocaleString() + ' ' + key).join(', ');
+    settingsMessage('Deletion completed. Removed ' + (summary || '0 records') + '.');
+  } catch (error) { settingsMessage(error.message || 'Could not delete the selected data.', true); }
+  finally { button.textContent = 'Delete matching data'; button.disabled = $('#settings-delete-confirmation').value.trim() !== 'DELETE' || !settingsPreviewToken; }
+}
+function setupSettingsDataManagement() {
+  const form = $('#settings-data-form'); if (!form) return;
+  $('#settings-data-scope').addEventListener('change', updateSettingsScope);
+  form.addEventListener('submit', previewSettingsDeletion);
+  $('#settings-clear-filters').addEventListener('click', () => {
+    form.querySelectorAll('input').forEach((input) => { input.value = ''; });
+    form.querySelectorAll('select').forEach((select) => { select.selectedIndex = 0; });
+    resetSettingsPreview(); settingsMessage('');
+  });
+  form.addEventListener('input', (event) => {
+    if (event.target.id === 'settings-delete-confirmation') return;
+    if (!$('#settings-data-preview').hidden) resetSettingsPreview();
+    settingsMessage('');
+  });
+  form.addEventListener('change', (event) => {
+    if (event.target.id === 'settings-data-scope') return;
+    if (!$('#settings-data-preview').hidden) resetSettingsPreview();
+    settingsMessage('');
+  });
+  $('#settings-delete-confirmation').addEventListener('input', (event) => {
+    $('#settings-delete-button').disabled = event.target.value.trim() !== 'DELETE' || !settingsPreviewToken;
+  });
+  $('#settings-delete-button').addEventListener('click', deleteSettingsData);
+  updateSettingsScope();
+}
+
 function universalRefreshCategories() { const select = $('#universal-filters')?.elements.categoryStatus; if (select) choices(select, [...new Set(state.config.statusCategories || [])], 'All categories'); }
 function renderValidation() { setWorkflowStep(1, [0]); const target = notice('✓ File validated successfully', 'Your file is valid and ready for the next step.'); const stats = el('div', undefined, 'review-stats'); [['File', state.upload?.name || state.result.file?.name || 'Uploaded file'], ['Orders', state.result.summary.uniqueOrders], ['Product rows', state.result.summary.productRows], ['Unique products', state.result.summary.detectedProducts], ['Report type', state.result.templateType === 'full' ? 'Full Report' : 'Simple Report']].forEach(([label, value]) => { const card = el('div'); card.append(el('span', label), el('strong', String(value))); stats.append(card); }); const start = el('button', 'Start Generating Report', 'button button-primary'); start.type = 'button'; start.addEventListener('click', startProcessing); target.append(stats, start); }
 function activeUploadBlocked() { if (!state.processId) return false; const process = { status: state.result?.status || 'review_required' }; if (process.status === 'review_required') renderReview(); else notice('Current report is unfinished', 'Your current report needs to be completed before you can upload another file.', true); return true; }
@@ -777,4 +898,4 @@ async function loadUniversal() {
 async function universalExport() { const status = $('#universal-export-status'); const button = $('#universal-export'); if (button.disabled) return; button.disabled = true; status.textContent = 'Preparing Full Report CSV…'; try { const response = await fetch(`/api/universal/export?${universalParams({ exportType: 'full', format: 'csv' })}`); if (!response.ok) { const payload = await response.json().catch(() => ({})); throw new Error(payload.message || 'Export could not be completed.'); } const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'deliveryiq-full-report.csv'; document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url); status.textContent = 'Full Report CSV download ready.'; } catch (error) { status.textContent = error.message || 'Export could not be completed.'; } finally { button.disabled = false; } }
 (function setupUniversalReport() { const form = $('#universal-filters'); if (!form) return; const pop = $('#universal-date-popover'); const trigger = $('#universal-date-trigger'); const closeDate = () => { pop.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }; closeDate(); document.querySelectorAll('[data-analyze]').forEach((button) => button.onclick = () => { form.elements.analyzeBy.value = button.dataset.analyze; setActive('[data-analyze]', button.dataset.analyze, 'analyze'); loadUniversal(); }); document.querySelectorAll('[data-delivery-view]').forEach((button) => button.onclick = () => { form.elements.deliveryView.value = button.dataset.deliveryView; setActive('[data-delivery-view]', button.dataset.deliveryView, 'deliveryView'); loadUniversal(); }); document.querySelectorAll('[data-payment]').forEach((button) => button.onclick = () => { form.elements.paymentMode.value = button.dataset.payment; setActive('[data-payment]', button.dataset.payment, 'payment'); loadUniversal(); }); trigger.onclick = () => { const open = pop.hidden; pop.hidden = !open; trigger.setAttribute('aria-expanded', String(open)); if (open) { $('#universal-from-date').value = form.elements.fromDate.value; $('#universal-to-date').value = form.elements.toDate.value; } }; document.querySelectorAll('[data-range]').forEach((button) => button.onclick = () => { const today = new Date(); const from = button.dataset.range === 'month' ? new Date(today.getFullYear(), today.getMonth(), 1) : new Date(today.getFullYear(), today.getMonth(), today.getDate() - Number(button.dataset.range) + 1); $('#universal-from-date').value = localDate(from); $('#universal-to-date').value = localDate(today); }); $('#universal-date-close').onclick = closeDate; $('#universal-date-cancel').onclick = closeDate; $('#universal-date-apply').onclick = () => { const from = $('#universal-from-date').value; const to = $('#universal-to-date').value; const error = $('#universal-date-error'); if (!from || !to || from > to) { error.hidden = false; error.textContent = 'Start Date must be on or before End Date.'; return; } error.hidden = true; form.elements.fromDate.value = from; form.elements.toDate.value = to; closeDate(); loadUniversal(); }; $('#universal-export').onclick = universalExport; $('#universal-refresh').onclick = loadUniversal; document.addEventListener('pointerdown', (event) => { if (!pop.hidden && !pop.contains(event.target) && !trigger.contains(event.target)) closeDate(); }); document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeDate(); }); }());
 (function setupUniversalViewNavigation() { document.querySelectorAll('[data-universal-mode]').forEach((button) => button.onclick = () => { universalView.mode = button.dataset.universalMode; setActive('[data-universal-mode]', universalView.mode, 'universalMode'); $('#universal-quick-insights').hidden = universalView.mode !== 'insights'; loadUniversal(); }); document.querySelectorAll('[data-quick-insight]:not(:disabled)').forEach((button) => button.onclick = () => { universalView.quickInsight = button.dataset.quickInsight; setActive('[data-quick-insight]', universalView.quickInsight, 'quickInsight'); if (universalView.mode === 'insights') loadUniversal(); }); }());
-renderUploadTemplate(); document.body.classList.add('upload-restoring'); page(pageFromLocation()); if (!state.configLoaded) refreshConfig().catch(() => {}); fetch('/api/health').then((r) => r.json()).then(() => { $('#service-status').textContent = 'Service online'; }).catch(() => { $('#service-status').textContent = 'Service unavailable'; });
+renderUploadTemplate(); setupSettingsDataManagement(); document.body.classList.add('upload-restoring'); page(pageFromLocation()); if (!state.configLoaded) refreshConfig().catch(() => {}); fetch('/api/health').then((r) => r.json()).then(() => { $('#service-status').textContent = 'Service online'; }).catch(() => { $('#service-status').textContent = 'Service unavailable'; });
