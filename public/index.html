@@ -89,49 +89,19 @@
         <div class="page-heading">
           <div>
             <p class="eyebrow">NEW REPORT</p>
-            <h1 id="upload-title">Choose your report type</h1>
-            <p class="page-context">Start by choosing the delivery report that matches the detail available in your file.</p>
+            <h1 id="upload-title">Upload delivery data</h1>
+            <p class="page-context">Upload your full delivery dataset to analyze orders, products, couriers, and stores in one report.</p>
           </div>
         </div>
 
-        <section class="report-type-selector" id="report-type-selector" aria-labelledby="report-type-selector-title">
-          <p class="eyebrow">STEP 1</p>
-          <h2 id="report-type-selector-title">Choose your report type</h2>
-          <div class="report-type-options">
-            <article class="report-type-card is-recommended">
-              <span class="recommendation">Recommended</span>
-              <h3>Simple Report</h3>
-              <p>Essential delivery and order analysis for everyday reporting.</p>
-              <ul><li>Order information</li><li>Order date</li><li>Delivery status</li><li>Product information</li><li>Payment information</li></ul>
-              <div class="report-type-best-for"><span>Best for</span><strong>Quick and essential delivery analysis.</strong></div>
-              <button type="button" class="button button-primary" data-report-type="simple" aria-pressed="false">Select Simple Report</button>
-            </article>
-            <article class="report-type-card">
-              <h3>Full Report</h3>
-              <p>Detailed order and product analysis with additional commercial and delivery information.</p>
-              <ul><li>Everything in Simple Report</li><li>Product quantity</li><li>Unit product price</li><li>Courier information</li><li>Source / store information</li></ul>
-              <div class="report-type-best-for"><span>Best for</span><strong>Deeper order, product and delivery analysis.</strong></div>
-              <button type="button" class="button button-secondary" data-report-type="full" aria-pressed="false">Select Full Report</button>
-            </article>
-          </div>
-          <div class="report-feature-comparison" aria-labelledby="feature-comparison-title">
-            <h3 id="feature-comparison-title">Compare report features</h3>
-            <dl>
-              <div><dt>Order, date, status, product, and payment information</dt><dd><span>Simple</span>✓</dd><dd><span>Full</span>✓</dd></div>
-              <div><dt>Product quantity and unit price</dt><dd><span>Simple</span>—</dd><dd><span>Full</span>✓</dd></div>
-              <div><dt>Courier and source / store information</dt><dd><span>Simple</span>—</dd><dd><span>Full</span>✓</dd></div>
-            </dl>
-          </div>
-        </section>
-
-        <div id="upload-workflow" hidden>
+        <div id="upload-workflow">
           <section class="selected-report-heading" aria-live="polite">
             <div>
-              <p class="eyebrow" id="selected-report-type">Simple Report</p>
-              <div class="selected-report-name"><h2 id="selected-report-title">Simple Report</h2><span class="selected-report-badge">✓ Selected</span></div>
-              <p id="selected-report-description">Upload your Simple Report file.</p>
+              <p class="eyebrow" id="selected-report-type">FULL REPORT</p>
+              <div class="selected-report-name"><h2 id="selected-report-title">Full Report</h2><span class="selected-report-badge">✓ Selected</span></div>
+              <p id="selected-report-description">Upload your Full Report file.</p>
             </div>
-            <div class="selected-report-actions"><button type="button" class="button button-secondary" id="change-report-type">Change report type</button><button type="button" class="button button-danger button-clear-result" id="clear-current-result" hidden>Clear Result</button></div>
+            <div class="selected-report-actions"><button type="button" class="button button-danger button-clear-result" id="clear-current-result" hidden>Clear Result</button></div>
           </section>
 
           <ol class="workflow-stepper" aria-label="Report workflow">
@@ -235,18 +205,7 @@
             <p id="universal-range" class="universal-range" aria-live="polite">Currently showing data from —</p>
           </div>
           <div class="heading-actions">
-            <div class="download-menu">
-              <button id="universal-export" class="button button-primary" type="button" aria-expanded="false" aria-controls="universal-export-menu">Download report <span aria-hidden="true">⌄</span></button>
-              <div id="universal-export-menu" class="download-popover" hidden>
-                <strong>Download report</strong>
-                <span>Summary Report</span>
-                <button type="button" data-export="summary-csv">↓ CSV report</button>
-                <button type="button" data-export="summary-xlsx">↓ Excel report</button>
-                <span>Full Order Report</span>
-                <button type="button" data-export="full-csv">↓ CSV report</button>
-                <button type="button" data-export="full-xlsx">↓ Excel report</button>
-              </div>
-            </div>
+            <button id="universal-export" class="button button-primary" type="button">Download Full Report CSV</button>
             <button id="universal-refresh" class="button button-secondary" type="button">Refresh</button>
           </div>
         </div>
