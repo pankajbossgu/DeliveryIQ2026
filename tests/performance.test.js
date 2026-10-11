@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 const { calculateObjectSize } = mongoose.mongo.BSON;
 const { validateUpload, processValidatedUpload, MAX_SOURCE_ROWS, xlsxWorkbook } = require('../src/upload');
 const { classifyStatus, createStatusClassifier, normalizeMappingValue } = require('../src/classification');
-const { ProcessingStore, ReportStore, ReportPayload, ReportProcess, PAYLOAD_CHUNK_BYTES, PayloadStore } = require('../src/reports');
+const { ProcessingStore, ReportStore, ReportPayload, ReportProcess, PAYLOAD_CHUNK_BYTES, PayloadStore, reportRowFilter } = require('../src/reports');
 const { MappingStore } = require('../src/mappings');
 const { GeminiProductClassifier } = require('../src/product-classifier');
 const limits = require('../public/js/limits');
@@ -19,6 +19,29 @@ function inputFor(count, unique) {
   const result = validateUpload(fixture(count, unique), { templateType: 'full', classify: false });
   assert.equal(result.success, true); return result;
 }
+
+test('report detail filters are pushed down without weakening tenant or report scope', () => {
+  const scoped = reportRowFilter('tenant-a', 'report-123', {
+    from: '2026-01-01', to: '2026-01-31', date: '2026-01-15',
+    category: 'Delivered', paymentMode: 'COD'
+  }, 'full');
+  assert.deepEqual(scoped, {
+    clientId: 'tenant-a',
+    reportId: 'report-123',
+    category: 'Delivered',
+    paymentMode: 'COD',
+    $and: [
+      { orderDate: { $gte: '2026-01-01', $lte: '2026-01-31' } },
+      { orderDate: '2026-01-15' }
+    ]
+  });
+  assert.deepEqual(reportRowFilter('tenant-b', 'report-456', {}, 'simple'), {
+    clientId: 'tenant-b', reportId: 'report-456'
+  });
+  assert.equal(reportRowFilter('tenant-a', 'report-123', { courier: 'FastShip' }, 'simple'), null);
+  assert.equal(reportRowFilter('tenant-a', 'report-123', { arbitraryField: 'value' }, 'full'), null);
+});
+
 function finalRows(job) {
   const products = new Map(job.result.classifications.products.map((item) => [item.normalizedProductName, item]));
   const statuses = new Map(job.result.classifications.statuses.map((item) => [item.value, item]));
