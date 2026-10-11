@@ -58,7 +58,7 @@ app.post('/api/auth/login', loginRateLimit, (request, response) => {
 });
 app.post('/api/auth/logout', (request, response) => { response.setHeader('Set-Cookie', sessionCookie('', 0)); return response.json({ success: true }); });
 app.use('/api', requireAdmin);
-function stableFilters(filters) { return JSON.stringify(Object.fromEntries(Object.entries(filters || {}).sort(([a], [b]) => a.localeCompare(b))); }
+function stableFilters(filters) { return JSON.stringify(Object.fromEntries(Object.entries(filters || {}).sort(([a], [b]) => a.localeCompare(b)))); }
 function dataPreviewToken(clientId, scope, filters, issuedAt = Date.now()) {
   const payload = Buffer.from(JSON.stringify({ clientId, scope, filters: stableFilters(filters), issuedAt, expiresAt: issuedAt + 10 * 60 * 1000 })).toString('base64url');
   return payload + '.' + sessionSignature(payload);
