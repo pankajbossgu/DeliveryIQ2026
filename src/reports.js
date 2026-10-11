@@ -789,4 +789,4 @@ class ProcessingStore {
   }
 }
 
-module.exports = { PayloadStore, ReportPayload, ReportProcess, PAYLOAD_CHUNK_BYTES, ReportStore, ProcessingStore, UniversalStore, UniversalOrder, UniversalOrderOccurrence, UniversalSync, aggregate, applyFilters, csv, csvLine, safeCell, universalExportRows, UNIVERSAL_EXPORT_HEADERS, dimensions, reportRowFilter };
+module.exports = { PayloadStore, Report, ReportRow, ReportPayload, ReportProcess, PAYLOAD_CHUNK_BYTES, ReportStore, ProcessingStore, UniversalStore, UniversalOrder, UniversalOrderOccurrence, UniversalSync, aggregate, applyFilters, csv, csvLine, safeCell, universalExportRows, UNIVERSAL_EXPORT_HEADERS, dimensions, reportRowFilter };

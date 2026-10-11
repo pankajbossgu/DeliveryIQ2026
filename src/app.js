@@ -8,11 +8,13 @@ const rateLimit = require('express-rate-limit');
 const { validateUpload, processValidatedUpload, MAX_SOURCE_ROWS, MAX_FILE_SIZE, csvTemplate, xlsxTemplate, xlsxWorkbook } = require('./upload');
 const { REPORT_CATEGORIES } = require('./classification');
 const { MappingStore } = require('./mappings');
+const { DataManagementService, cleanFilters } = require('./data-management');
 const { ReportStore, ProcessingStore, csv: reportCsv, csvLine, universalExportRows, UNIVERSAL_EXPORT_HEADERS } = require('./reports');
 const { GeminiProductClassifier, BATCH_SIZE } = require('./product-classifier');
 const { classifyProducts, normalizeProductName } = require('./product');
 
 const app = express(); const publicDirectory = path.join(__dirname, '..', 'public'); const mappingStore = new MappingStore(); const reportStore = new ReportStore(); const processingStore = new ProcessingStore();
+const dataManagement = new DataManagementService({ reportStore, mappingStore, processingStore });
 const SESSION_COOKIE = 'deliveryiq_admin_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
 function cookies(request) { return Object.fromEntries((request.headers.cookie || '').split(';').map((part) => part.trim().split(/=(.*)/s, 2)).filter(([name]) => name).map(([name, value]) => [name, decodeURIComponent(value || '')])); }
@@ -56,6 +58,40 @@ app.post('/api/auth/login', loginRateLimit, (request, response) => {
 });
 app.post('/api/auth/logout', (request, response) => { response.setHeader('Set-Cookie', sessionCookie('', 0)); return response.json({ success: true }); });
 app.use('/api', requireAdmin);
+function stableFilters(filters) { return JSON.stringify(Object.fromEntries(Object.entries(filters || {}).sort(([a], [b]) => a.localeCompare(b)))); }
+function dataPreviewToken(clientId, scope, filters, selectionFingerprint, issuedAt = Date.now()) {
+  const payload = Buffer.from(JSON.stringify({ clientId, scope, filters: stableFilters(filters), selectionFingerprint, issuedAt, expiresAt: issuedAt + 10 * 60 * 1000 })).toString('base64url');
+  return payload + '.' + sessionSignature(payload);
+}
+function verifyDataPreviewToken(token, clientId, scope, filters) {
+  if (typeof token !== 'string') return null;
+  const [payload, signature, extra] = token.split('.');
+  if (!payload || !signature || extra || !timingSafeEqual(signature, sessionSignature(payload))) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return data.clientId === clientId && data.scope === scope && data.filters === stableFilters(filters) && typeof data.selectionFingerprint === 'string' && Number.isFinite(data.expiresAt) && data.expiresAt > Date.now() && data.issuedAt <= Date.now() ? data : null;
+  } catch { return null; }
+}
+app.post('/api/settings/data/preview', async (request, response) => {
+  try {
+    const preview = await dataManagement.preview(clientId, request.body?.scope, request.body?.filters || {});
+    return response.json({ success: true, preview, previewToken: dataPreviewToken(clientId, preview.scope, preview.filters, preview.selectionFingerprint) });
+  } catch (error) {
+    return response.status(error.status || 500).json({ success: false, code: error.code || 'DATA_PREVIEW_FAILED', message: error.status ? error.message : 'We could not preview the selected data. Please try again.' });
+  }
+});
+app.post('/api/settings/data/delete', async (request, response) => {
+  try {
+    const scope = request.body?.scope; const filters = cleanFilters(scope, request.body?.filters || {});
+    if (request.body?.confirmation !== 'DELETE') return response.status(422).json({ success: false, code: 'DELETE_CONFIRMATION_REQUIRED', message: 'Type DELETE to confirm this operation.' });
+    const preview = verifyDataPreviewToken(request.body?.previewToken, clientId, scope, filters);
+    if (!preview) return response.status(409).json({ success: false, code: 'PREVIEW_EXPIRED', message: 'This preview expired or its filters changed. Preview the deletion again.' });
+    const deleted = await dataManagement.delete(clientId, scope, filters, preview.selectionFingerprint);
+    return response.json({ success: true, deleted });
+  } catch (error) {
+    return response.status(error.status || 500).json({ success: false, code: error.code || 'DATA_DELETE_FAILED', message: error.status ? error.message : 'We could not delete the selected data. Please try again.' });
+  }
+});
 // Universal reports are read-only projections. The client scope is always the
 // server-owned authenticated/development context, never a request parameter.
 app.get('/api/universal/export', universalExportRateLimit, universalRoute(async (request, response, next) => {
@@ -83,7 +119,7 @@ app.get('/api/universal/orders/:orderId', universalRoute(async (request, respons
 app.get('/api/universal/summary', universalRoute(async (request, response) => { const query = universalQuery(request.query); if (query.error) return invalidUniversal(response, query.error); return response.json({ success: true, summary: await app.locals.universalStore.summary(universalClientId(), query) }); }));
 app.get('/api/universal/analytics', universalRoute(async (request, response) => { const query = universalQuery(request.query); if (query.error) return invalidUniversal(response, query.error); return response.json({ success: true, analytics: await app.locals.universalStore.analytics(universalClientId(), query) }); }));
 app.get('/api/universal/grouped', universalRoute(async (request, response) => { const query = universalGroupedQuery(request.query); if (query.error) return invalidUniversal(response, query.error); return response.json({ success: true, report: await app.locals.universalStore.groupedReport(universalClientId(), query) }); }));
-app.get('/api/uploads/template/:templateType.:format', (request, response) => { const { templateType, format } = request.params; if (!['simple', 'full'].includes(templateType) || !['csv', 'xlsx'].includes(format)) return response.status(404).json({ error: 'Not found' }); return response.attachment(`deliveryiq-${templateType}-report-template.${format}`).type(format === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(format === 'csv' ? csvTemplate(templateType) : xlsxTemplate(templateType)); });
+app.get('/api/uploads/template/:templateType.:format', (request, response) => { const { templateType, format } = request.params; if (templateType !== 'full' || !['csv', 'xlsx'].includes(format)) return response.status(404).json({ error: 'Not found' }); return response.attachment(`deliveryiq-full-report-template.${format}`).type(format === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(format === 'csv' ? csvTemplate('full') : xlsxTemplate('full')); });
 app.get('/api/uploads/template.csv', (request, response) => response.attachment('deliveryiq-full-report-template.csv').type('text/csv').send(csvTemplate('full')));
 app.get('/api/uploads/template.xlsx', (request, response) => response.attachment('deliveryiq-full-report-template.xlsx').type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(xlsxTemplate('full')));
 app.get('/api/classifications/config', async (request, response) => { const { masters, categories } = await mappingStore.taxonomySnapshot(clientId); return response.json({ statusCategories: REPORT_CATEGORIES, masterCategories: masters.filter((item) => item.active), productCategories: categories.filter((item) => item.active) }); });

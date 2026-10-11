@@ -67,7 +67,7 @@ test('XLSX enforces the same non-empty row limit', () => {
   // to count a raw row, before required-column validation runs.
   for (const count of [35000, 35001]) {
     const buffer = xlsxWorkbook([['Order ID'], ...Array.from({ length: count }, (_, i) => [String(i)])]);
-    const result = validateUpload({ originalname: 'limit.xlsx', buffer }, { classify: false, templateType: 'simple' });
+    const result = validateUpload({ originalname: 'limit.xlsx', buffer }, { classify: false, templateType: 'full' });
     assert.equal(result.code, count === 35000 ? 'MISSING_REQUIRED_COLUMNS' : 'ROW_LIMIT_EXCEEDED');
   }
 });

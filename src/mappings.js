@@ -169,4 +169,4 @@ class MappingStore {
     return (await this.listSuggestions(clientId, [normalizeProductName(product)]))[0] || null;
   }
 }
-module.exports = { MappingStore, MasterCategory, ProductCategory, ProductMapping };
+module.exports = { MappingStore, MasterCategory, ProductCategory, ProductMapping, StatusMapping, ProductClassificationSuggestion };

@@ -35,8 +35,8 @@ let sequence = 0;
 async function review(count, extras = []) {
   mode = 'initial'; calls = []; sequence++;
   const names = Array.from({ length: count }, (_, i) => `Failed ${sequence} ${i}`).concat(extras);
-  const body = Buffer.from('Order ID,Order Date,Order Status,Product Name,Payment Mode\n' + names.map((name, i) => `${i},2026-01-01,Delivered,${name},COD`).join('\n'));
-  const response = await actualFetch(base + '/api/uploads/validate', { method: 'POST', headers: { cookie, 'content-type': 'application/octet-stream', 'x-template-type': 'simple', 'x-file-name': 'synthetic.csv' }, body });
+  const body = Buffer.from('Order ID,Order Date,Order Status,Product Name,Product Qty,Product Price,Payment Mode,Courier,Source/Website/Store\n' + names.map((name, i) => `${i},2026-01-01,Delivered,${name},1,10,COD,Test Courier,Test Store`).join('\n'));
+  const response = await actualFetch(base + '/api/uploads/validate', { method: 'POST', headers: { cookie, 'content-type': 'application/octet-stream', 'x-template-type': 'full', 'x-file-name': 'synthetic.csv' }, body });
   const payload = await response.json(); assert.equal(response.status, 200);
   const id = payload.process.processId;
   await api(`/api/report-processes/${id}/start`);

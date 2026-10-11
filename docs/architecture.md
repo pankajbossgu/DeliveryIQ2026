@@ -2,7 +2,7 @@
 
 DeliveryIQ is one Express/MongoDB/Vercel application: `api/index.js` exposes the Express entry point, `src/` holds server business rules and persistence, and `public/` holds the browser application. No raw upload file is retained.
 
-`src/upload.js` parses bounded CSV/XLSX uploads (10 MB, 35,000 rows), validates the selected Simple or Full template, normalizes order/product identifiers, and performs order-level conflict checks. `src/mappings.js` provides tenant-scoped status mappings, product mappings, and product categories. `src/reports.js` creates immutable report-row snapshots and computes server-side analytics.
+`src/upload.js` parses bounded CSV/XLSX uploads (10 MB, 35,000 rows), validates the Full Report format, normalizes order/product identifiers, and performs order-level conflict checks. Upload Data exposes only the Full Report template; historical reports remain readable. `src/mappings.js` provides tenant-scoped status mappings, product mappings, and product categories. `src/reports.js` creates immutable report-row snapshots and computes server-side analytics. `src/data-management.js` provides allow-listed, tenant-scoped data deletion with preview counts, expiring signed preview tokens, and an explicit `DELETE` confirmation. Removing report datasets also deletes dependent report rows, payloads, sync evidence, and occurrences, then rebuilds current-order projections from retained history.
 
 MongoDB is used when `MONGODB_URI` is configured; a non-durable in-memory fallback supports demos and tests. The server owns the temporary `DEFAULT_CLIENT_ID` scope—request query parameters never choose a client. The current single-admin layer verifies `ADMIN_USERNAME` and `ADMIN_PASSWORD` only on the server, then issues a signed, eight-hour HttpOnly session cookie using `SESSION_SECRET`. All DeliveryIQ APIs and application pages require that session; `/login`, `/api/auth/login`, and `/api/health` remain public. This is deliberately not a multi-tenant authorization system.
 
@@ -16,6 +16,10 @@ The rate-limited `/api/universal` routes derive scope from the same server-owned
 - `GET /api/universal/analytics` accepts those same filters and returns a client-scoped, current-order-only analytics payload: KPI/RTO totals, category and actual-status distributions, order-date/value trend points, up to ten product-line aggregates, and objective RTO attention data. MongoDB evaluates these facets after the tenant-scoped match; the browser never receives all orders to calculate analytics.
 
 Malformed pagination, dates, filter values, or sort values return `422` with `INVALID_UNIVERSAL_QUERY`; inaccessible or missing orders return `404`. Empty client datasets return valid empty collections and zero-valued summaries.
+
+## Workspace data management
+
+Settings supports preview-first deletion for complete uploaded report datasets, saved product mappings, and AI review suggestions. Upload deletion filters may include source filename, upload date range, status category, master category, and product category; category filters select entire reports and never silently delete only matching rows. Product-mapping and suggestion cleanup are independent scopes. The server rejects unsupported filters, requires a fresh signed preview token (10-minute expiry) and the exact confirmation word `DELETE`, and always applies the server-owned client scope. Taxonomy master/product categories are deliberately not hard-deleted from this screen to avoid orphaning historical references.
 
 ## Product intelligence
 
